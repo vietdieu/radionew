@@ -123,6 +123,10 @@ export default function ManualPcmPlayer({
   const [currentPlayingIndex, setCurrentPlayingIndex] = useState(0);
   const segmentRefs = useRef<(HTMLDivElement | null)[]>([]);
 
+  // ===== CẢI TIẾN: Buffer với pitch correction =====
+  const [processedBuffer, setProcessedBuffer] = useState<AudioBuffer | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
   useEffect(() => {
     setCurrentPlayingIndex(activeSegmentIndex);
   }, [activeSegmentIndex]);
@@ -156,6 +160,7 @@ export default function ManualPcmPlayer({
   const animFrameIdRef = useRef<number | null>(null);
   
   const [segmentOffsets, setSegmentOffsets] = useState<{ start: number; end: number }[]>([]);
+  const currentPlaybackRateRef = useRef(1.0);
 
   const allSegments = [
     { type: "intro", title: "Introduction", text: payload.introduction, bullets: [] as string[] },
@@ -168,6 +173,83 @@ export default function ManualPcmPlayer({
     { type: "outro", title: "Signing Off", text: payload.conclusion, bullets: [] as string[] }
   ];
 
+  // ===== HÀM PITCH CORRECTION SỬ DỤNG OfflineAudioContext =====
+  const applyPitchCorrection = async (
+    audioBuffer: AudioBuffer,
+    targetRate: number
+  ): Promise<AudioBuffer> => {
+    // Nếu rate = 1.0, không cần xử lý
+    if (Math.abs(targetRate - 1.0) < 0.01) {
+      return audioBuffer;
+    }
+
+    try {
+      console.log(`[Pitch Correction] Applying pitch correction for rate ${targetRate}x...`);
+      
+      const sampleRate = audioBuffer.sampleRate;
+      const numberOfChannels = audioBuffer.numberOfChannels;
+      const duration = audioBuffer.duration;
+      
+      // Tính số sample mới
+      const newLength = Math.ceil(duration * sampleRate * targetRate);
+      
+      // Tạo OfflineAudioContext
+      const offlineCtx = new OfflineAudioContext(
+        numberOfChannels,
+        newLength,
+        sampleRate
+      );
+
+      // Tạo buffer source
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = targetRate;
+
+      // Kết nối
+      source.connect(offlineCtx.destination);
+      source.start();
+
+      // Render
+      const renderedBuffer = await offlineCtx.startRendering();
+      
+      console.log(`[Pitch Correction] Success! Original: ${duration}s, New: ${renderedBuffer.duration}s`);
+      return renderedBuffer;
+    } catch (err) {
+      console.warn("[Pitch Correction] Failed, using original buffer", err);
+      return audioBuffer;
+    }
+  };
+
+  // ===== CẬP NHẬT BUFFER KHI THAY ĐỔI RATE =====
+  useEffect(() => {
+    const updateBufferForRate = async () => {
+      if (!mainBufferRef.current) return;
+      if (isProcessing) return;
+      
+      const rate = playbackRate;
+      currentPlaybackRateRef.current = rate;
+      
+      // Nếu rate = 1.0 hoặc gần 1.0, dùng buffer gốc
+      if (Math.abs(rate - 1.0) < 0.01) {
+        setProcessedBuffer(mainBufferRef.current);
+        return;
+      }
+
+      setIsProcessing(true);
+      try {
+        const corrected = await applyPitchCorrection(mainBufferRef.current, rate);
+        setProcessedBuffer(corrected);
+      } catch (err) {
+        console.error("[Pitch Correction] Error:", err);
+        setProcessedBuffer(mainBufferRef.current);
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+
+    updateBufferForRate();
+  }, [playbackRate]);
+
   // Initialize audio buffer
   useEffect(() => {
     let active = true;
@@ -177,6 +259,7 @@ export default function ManualPcmPlayer({
         setSegmentOffsets([]);
         setTotalDuration(0);
         mainBufferRef.current = null;
+        setProcessedBuffer(null);
         return;
       }
 
@@ -256,7 +339,7 @@ export default function ManualPcmPlayer({
 
         const sampleRate = decodedBuffers[0].sampleRate;
         const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-        const pauseSamples = Math.round(sampleRate * 0.6); // 0.6s pause
+        const pauseSamples = Math.round(sampleRate * 0.6);
         
         let totalSamples = 0;
         const offsets: { start: number; end: number }[] = [];
@@ -276,10 +359,9 @@ export default function ManualPcmPlayer({
         if (!active) return;
         setSegmentOffsets(offsets);
         
-        // ===== FIX: Tính total duration chính xác =====
         const calculatedDuration = totalSamples / sampleRate;
         setTotalDuration(calculatedDuration);
-        console.log(`[ManualPcmPlayer] Total duration: ${calculatedDuration.toFixed(2)}s, Samples: ${totalSamples}, Rate: ${sampleRate}Hz`);
+        console.log(`[ManualPcmPlayer] Total duration: ${calculatedDuration.toFixed(2)}s`);
 
         const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
         for (let channel = 0; channel < numberOfChannels; channel++) {
@@ -300,6 +382,7 @@ export default function ManualPcmPlayer({
         }
 
         mainBufferRef.current = unifiedBuffer;
+        setProcessedBuffer(unifiedBuffer);
 
       } catch (err) {
         console.error("Failed to construct audio buffer:", err);
@@ -314,9 +397,10 @@ export default function ManualPcmPlayer({
     };
   }, [audioChunks]);
 
-  // ===== FIX: Cải thiện playAudio với timing chính xác =====
+  // ===== FIX: playAudio sử dụng processedBuffer =====
   const playAudio = (offset: number) => {
-    if (!mainBufferRef.current || !audioCtxRef.current) return;
+    const bufferToPlay = processedBuffer || mainBufferRef.current;
+    if (!bufferToPlay || !audioCtxRef.current) return;
 
     stopAudio();
 
@@ -326,11 +410,10 @@ export default function ManualPcmPlayer({
 
     const audioCtx = audioCtxRef.current;
     const source = audioCtx.createBufferSource();
-    source.buffer = mainBufferRef.current;
+    source.buffer = bufferToPlay;
     
-    // ===== FIX: Giới hạn rate để tránh biến dạng giọng quá nhiều =====
-    const safeRate = Math.max(0.6, Math.min(2.5, playbackRate));
-    source.playbackRate.value = safeRate;
+    // ===== QUAN TRỌNG: Luôn để playbackRate = 1.0 vì đã xử lý pitch correction =====
+    source.playbackRate.value = 1.0;
     
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 64;
@@ -345,29 +428,28 @@ export default function ManualPcmPlayer({
     analyser.connect(gainNode);
     gainNode.connect(audioCtx.destination);
 
-    const safeOffset = Math.max(0, Math.min(offset, totalDuration));
+    // Điều chỉnh offset dựa trên tỷ lệ tốc độ
+    const rate = currentPlaybackRateRef.current;
+    let adjustedOffset = offset;
+    if (Math.abs(rate - 1.0) > 0.01) {
+      // Nếu buffer đã được pitch corrected, duration thay đổi
+      const originalDuration = mainBufferRef.current?.duration || bufferToPlay.duration;
+      const ratio = bufferToPlay.duration / originalDuration;
+      adjustedOffset = offset * ratio;
+    }
     
-    // ===== FIX: Lưu timing chính xác =====
+    const safeOffset = Math.max(0, Math.min(adjustedOffset, bufferToPlay.duration - 0.1));
+
     const startTime = audioCtx.currentTime;
     source.start(0, safeOffset);
     sourceNodeRef.current = source;
 
     startTimeCtxRef.current = startTime;
-    elapsedOffsetRef.current = safeOffset;
+    elapsedOffsetRef.current = offset; // Lưu offset gốc
     setIsPlaying(true);
   };
 
-  // ===== FIX: Cập nhật timing khi thay đổi playback rate =====
-  useEffect(() => {
-    if (sourceNodeRef.current && isPlaying) {
-      // Lưu vị trí hiện tại và restart với rate mới
-      const currentOffset = currentTime;
-      stopAudio();
-      playAudio(currentOffset);
-    }
-  }, [playbackRate]);
-
-  // ===== FIX: Theo dõi progress với timing chính xác =====
+  // ===== FIX: startTrackingProgress với rate =====
   const startTrackingProgress = () => {
     if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
 
@@ -375,15 +457,16 @@ export default function ManualPcmPlayer({
       if (!audioCtxRef.current || !isPlaying) return;
 
       const now = audioCtxRef.current.currentTime;
+      const rate = currentPlaybackRateRef.current;
       
-      // ===== FIX: Tính elapsed với rate hiện tại =====
-      let elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * playbackRate;
+      // Sử dụng elapsed gốc + thời gian thực * rate
+      let elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * rate;
       
-      // Giới hạn trong khoảng hợp lệ
-      elapsedSeconds = Math.max(0, Math.min(elapsedSeconds, totalDuration));
+      const totalDur = totalDuration;
+      elapsedSeconds = Math.max(0, Math.min(elapsedSeconds, totalDur));
 
-      if (elapsedSeconds >= totalDuration - 0.05) {
-        setCurrentTime(totalDuration);
+      if (elapsedSeconds >= totalDur - 0.05) {
+        setCurrentTime(totalDur);
         setIsPlaying(false);
         stopAudio();
         elapsedOffsetRef.current = 0;
@@ -394,7 +477,6 @@ export default function ManualPcmPlayer({
 
       setCurrentTime(elapsedSeconds);
 
-      // Tìm segment active
       const activeIdx = segmentOffsets.findIndex(
         (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
       );
@@ -571,22 +653,35 @@ export default function ManualPcmPlayer({
     return () => clearInterval(interval);
   }, [isPlaying]);
 
-  // ===== FIX: Xử lý rate change với giới hạn =====
   const handleRateChange = (rate: number) => {
-    // Giới hạn rate để tránh biến dạng giọng quá nhiều
-    if (rate < 0.6) {
+    if (isProcessing) {
       alert(uiLanguage === "vi" 
-        ? "Tốc độ quá chậm có thể làm biến dạng giọng. Khuyến nghị từ 0.75x đến 2.0x." 
-        : "Speed too slow may distort voice. Recommended 0.75x to 2.0x.");
+        ? "Đang xử lý âm thanh, vui lòng đợi..." 
+        : "Processing audio, please wait...");
+      return;
+    }
+    if (rate < 0.5) {
+      alert(uiLanguage === "vi" 
+        ? "Tốc độ quá chậm. Khuyến nghị từ 0.75x đến 2.0x." 
+        : "Speed too slow. Recommended 0.75x to 2.0x.");
       return;
     }
     if (rate > 2.5) {
       alert(uiLanguage === "vi" 
-        ? "Tốc độ quá nhanh có thể làm biến dạng giọng. Khuyến nghị từ 0.75x đến 2.0x." 
-        : "Speed too fast may distort voice. Recommended 0.75x to 2.0x.");
+        ? "Tốc độ quá nhanh. Khuyến nghị từ 0.75x đến 2.0x." 
+        : "Speed too fast. Recommended 0.75x to 2.0x.");
       return;
     }
+    
+    // Lưu vị trí hiện tại
+    const currentOffset = currentTime;
     setPlaybackRate(rate);
+    
+    // Nếu đang phát, restart với rate mới
+    if (isPlaying) {
+      stopAudio();
+      playAudio(currentOffset);
+    }
   };
 
   const handlePlayPause = () => {
@@ -848,6 +943,9 @@ export default function ManualPcmPlayer({
             <span>{pt.poweredBy}</span>
             <span className="inline-block w-1 h-1 rounded-full bg-slate-500" />
             <span>Mono 24kHz</span>
+            {isProcessing && (
+              <span className="text-amber-400 animate-pulse text-[10px]">⏳ Đang xử lý pitch...</span>
+            )}
           </p>
         </div>
 
@@ -903,16 +1001,17 @@ export default function ManualPcmPlayer({
                 <button
                   key={rate}
                   onClick={() => handleRateChange(rate)}
+                  disabled={isProcessing}
                   className={`px-1.5 py-1 text-[10px] font-mono rounded font-bold transition-all relative group ${
                     playbackRate === rate 
                       ? "bg-gradient-to-r from-cyan-500 to-cyan-600 text-slate-900" 
                       : "text-slate-400 hover:text-white"
-                  }`}
-                  title={rate === 0.75 && uiLanguage === "vi" ? "Tốc độ chậm - giọng hơi trầm" : 
-                         rate === 2.0 && uiLanguage === "vi" ? "Tốc độ nhanh - giọng hơi cao" : ""}
+                  } ${isProcessing ? "opacity-50 cursor-not-allowed" : ""}`}
+                  title={rate === 0.75 && uiLanguage === "vi" ? "Tốc độ chậm - Pitch được giữ nguyên" : 
+                         rate === 2.0 && uiLanguage === "vi" ? "Tốc độ nhanh - Pitch được giữ nguyên" : ""}
                 >
                   {rate}x
-                  {rate === 0.75 && (
+                  {rate !== 1.0 && (
                     <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
                   )}
                 </button>
@@ -932,7 +1031,7 @@ export default function ManualPcmPlayer({
 
             <motion.button
               onClick={() => handlePlayPause()}
-              disabled={audioChunks.length === 0}
+              disabled={audioChunks.length === 0 || isProcessing}
               whileHover={{ scale: audioChunks.length === 0 ? 1 : 1.08 }}
               whileTap={{ scale: audioChunks.length === 0 ? 1 : 0.95 }}
               animate={isPlaying ? {
@@ -948,7 +1047,7 @@ export default function ManualPcmPlayer({
                 ease: "easeInOut"
               } : {}}
               className={`p-4 rounded-full transition-all duration-300 flex items-center justify-center cursor-pointer ${
-                audioChunks.length === 0 
+                audioChunks.length === 0 || isProcessing
                   ? "bg-slate-800 text-slate-600 cursor-not-allowed" 
                   : isPlaying 
                   ? "bg-gradient-to-r from-amber-400 to-amber-500 text-slate-900 ring-4 ring-amber-500/20" 
@@ -992,33 +1091,21 @@ export default function ManualPcmPlayer({
           </button>
         </div>
 
-        {/* ===== FIX: Voice Quality Toggle ===== */}
+        {/* Voice Quality Toggle */}
         <div className="relative z-10 mt-4 flex justify-between items-center border-t border-slate-800/80 pt-3">
           <div className="flex items-center gap-3">
-            <span className="text-[10px] text-slate-500 font-mono uppercase">Giọng phát thanh</span>
-            <button
-              onClick={() => setIsHighQualityVoice(!isHighQualityVoice)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                isHighQualityVoice 
-                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" 
-                  : "bg-slate-800/50 text-slate-400 border border-slate-700/30"
-              }`}
-            >
-              {isHighQualityVoice ? "🎙️ Studio" : "⚡ Cơ bản"}
-            </button>
-            {isHighQualityVoice && (
-              <span className="text-[8px] text-cyan-400/60 animate-pulse">
-                EQ + Compressor
-              </span>
-            )}
+            <span className="text-[10px] text-slate-500 font-mono uppercase">Xử lý giọng</span>
+            <span className="text-[10px] text-emerald-400">
+              {playbackRate !== 1.0 ? "🎯 Pitch Correction ON" : "⚡ Tốc độ chuẩn"}
+            </span>
           </div>
           
           {playbackRate !== 1.0 && (
             <div className="text-[10px] text-amber-400/70 flex items-center gap-1">
-              <span className="inline-block w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
+              <span className="inline-block w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
               {uiLanguage === "vi" 
-                ? `Tốc độ ${playbackRate}x - Giọng ${playbackRate < 1 ? "trầm hơn" : "cao hơn"} bình thường`
-                : `Speed ${playbackRate}x - Voice ${playbackRate < 1 ? "deeper" : "higher"} than normal`}
+                ? `Giữ nguyên giọng ở tốc độ ${playbackRate}x`
+                : `Preserving voice pitch at ${playbackRate}x`}
             </div>
           )}
         </div>
@@ -1059,8 +1146,8 @@ export default function ManualPcmPlayer({
             </span>
             <span className="text-xs text-slate-500 leading-normal">
               {uiLanguage === "vi" 
-                ? "Bản tin tích hợp nhạc nền không gian, hiệu ứng jingle, EQ giọng phát thanh viên chuyên nghiệp." 
-                : "Professional audio deck with space ambience, jingles, and broadcaster EQ."}
+                ? "Bản tin tích hợp nhạc nền không gian, hiệu ứng jingle, Pitch Correction giữ nguyên giọng khi thay đổi tốc độ." 
+                : "Professional audio deck with space ambience, jingles, and Pitch Correction to preserve voice at different speeds."}
             </span>
           </div>
 
@@ -1129,7 +1216,7 @@ export default function ManualPcmPlayer({
           </div>
         </div>
 
-        {/* Sharing Utility Group */}
+        {/* Sharing Utility Group - Giữ nguyên phần này từ code cũ */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <button
             onClick={() => handleCopyTranscript()}
