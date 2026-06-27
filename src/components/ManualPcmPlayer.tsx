@@ -84,9 +84,43 @@ const playerTranslations = {
   }
 };
 
-export default function ManualPcmPlayer({ payload, audioChunks, title, preferencesInfo, uiLanguage = "vi", briefingId }: ManualPcmPlayerProps) {
+export default function ManualPcmPlayer({ 
+  payload, 
+  audioChunks, 
+  title, 
+  preferencesInfo, 
+  uiLanguage: propUiLanguage = "vi", 
+  briefingId 
+}: ManualPcmPlayerProps) {
   const { preferences: userPref, updateDrivingMode } = useUserPreferences();
+  
+  // CẢI TIẾN: Lấy language từ nhiều nguồn
+  const getDefaultLanguage = (): "vi" | "en" => {
+    // 1. Từ props
+    if (propUiLanguage === "vi" || propUiLanguage === "en") return propUiLanguage;
+    // 2. Từ user preferences
+    if (userPref?.language === "vi" || userPref?.language === "en") return userPref.language;
+    // 3. Từ browser
+    const browserLang = navigator.language?.split('-')[0];
+    if (browserLang === "vi") return "vi";
+    // 4. Từ URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const langParam = urlParams.get('lang');
+    if (langParam === "vi" || langParam === "en") return langParam;
+    // 5. Default
+    return "vi";
+  };
+
+  const [uiLanguage, setUiLanguage] = useState<"vi" | "en">(getDefaultLanguage());
   const pt = playerTranslations[uiLanguage];
+  
+  // Đồng bộ UI language với user preferences
+  useEffect(() => {
+    if (userPref?.language === "vi" || userPref?.language === "en") {
+      setUiLanguage(userPref.language);
+    }
+  }, [userPref?.language]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState<number>(userPref.speed || 1.0);
@@ -101,17 +135,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
   useEffect(() => {
     setCurrentPlayingIndex(activeSegmentIndex);
   }, [activeSegmentIndex]);
-
-  // Handle auto-scroll into view when segment changes - DISABLED to prevent text list jumping and layout disruption
-  // useEffect(() => {
-  //   const activeEl = segmentRefs.current[currentPlayingIndex];
-  //   if (activeEl) {
-  //     activeEl.scrollIntoView({
-  //       behavior: "smooth",
-  //       block: "center",
-  //     });
-  //   }
-  // }, [currentPlayingIndex]);
 
   // Sync playbackRate with user preferences speed
   useEffect(() => {
@@ -141,7 +164,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
   
   // Timing references
   const startTimeCtxRef = useRef<number>(0);
-  const elapsedOffsetRef = useRef<number>(0); // how many seconds have we played since start
+  const elapsedOffsetRef = useRef<number>(0);
   const animFrameIdRef = useRef<number | null>(null);
   
   // Segment durations and cumulative offsets for "Read-along highlighting"
@@ -159,7 +182,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     { type: "outro", title: "Signing Off", text: payload.conclusion, bullets: [] as string[] }
   ];
 
-  // 1. Initialize audio buffer when chunks change
+  // CẢI TIẾN: Initialize audio buffer với validation và conversion
   useEffect(() => {
     let active = true;
 
@@ -178,7 +201,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
       elapsedOffsetRef.current = 0;
 
       try {
-        // Create an AudioContext for decoding and playback
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         audioCtxRef.current = audioCtx;
 
@@ -190,13 +212,52 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
           const arrayBuffer = base64ToArrayBuffer(chunk);
 
           try {
-            // decodeAudioData consumes the arrayBuffer, so we decode a fresh copy if needed.
-            const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+            let decoded = await audioCtx.decodeAudioData(arrayBuffer);
+            
+            // CẢI TIẾN: Kiểm tra và chuẩn hóa sample rate
+            if (decoded.sampleRate !== 24000) {
+              console.warn(`[ManualPcmPlayer] Sample rate ${decoded.sampleRate}Hz detected, resampling to 24kHz...`);
+              // Resample bằng cách tạo buffer mới với sample rate 24000
+              const targetRate = 24000;
+              const ratio = targetRate / decoded.sampleRate;
+              const newLength = Math.round(decoded.length * ratio);
+              const newBuffer = audioCtx.createBuffer(
+                decoded.numberOfChannels,
+                newLength,
+                targetRate
+              );
+              for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+                const srcData = decoded.getChannelData(ch);
+                const dstData = newBuffer.getChannelData(ch);
+                for (let j = 0; j < newLength; j++) {
+                  const srcIdx = j / ratio;
+                  const idx0 = Math.floor(srcIdx);
+                  const idx1 = Math.min(idx0 + 1, srcData.length - 1);
+                  const frac = srcIdx - idx0;
+                  dstData[j] = srcData[idx0] * (1 - frac) + srcData[idx1] * frac;
+                }
+              }
+              decoded = newBuffer;
+            }
+            
+            // CẢI TIẾN: Kiểm tra và chuẩn hóa channels
+            if (decoded.numberOfChannels > 1) {
+              console.warn(`[ManualPcmPlayer] ${decoded.numberOfChannels} channels detected, converting to mono...`);
+              const monoBuffer = audioCtx.createBuffer(1, decoded.length, decoded.sampleRate);
+              const monoData = monoBuffer.getChannelData(0);
+              for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+                const chData = decoded.getChannelData(ch);
+                for (let j = 0; j < decoded.length; j++) {
+                  monoData[j] += chData[j] / decoded.numberOfChannels;
+                }
+              }
+              decoded = monoBuffer;
+            }
+            
             decodedBuffers.push(decoded);
           } catch (decodeErr) {
             console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
             try {
-              // Fallback: If the chunk is raw headerless PCM, parse manually
               const rawPCM = base64ToArrayBuffer(chunk);
               const floatArray = pcmToFloat32(rawPCM);
               const fallbackBuf = audioCtx.createBuffer(1, floatArray.length, 24000);
@@ -216,7 +277,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
         // Calculate sizes, channels, and offsets
         const sampleRate = decodedBuffers[0].sampleRate;
         const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-        const pauseSamples = Math.round(sampleRate * 1.0); // 1.0-second silence pause for breathing room
+        const pauseSamples = Math.round(sampleRate * 1.0);
         
         let totalSamples = 0;
         const offsets: { start: number; end: number }[] = [];
@@ -237,7 +298,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
         setSegmentOffsets(offsets);
         setTotalDuration(totalSamples / sampleRate);
 
-        // Concatenate buffers into a single unified AudioBuffer with silent pauses
+        // Concatenate buffers into a single unified AudioBuffer
         const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
         for (let channel = 0; channel < numberOfChannels; channel++) {
           const outputChannel = unifiedBuffer.getChannelData(channel);
@@ -246,24 +307,18 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
             const bufSamples = Math.round(buf.duration * sampleRate);
             if (channel < buf.numberOfChannels) {
               const srcData = buf.getChannelData(channel);
-              // If the chunk sample rate matches, copy directly; otherwise, resample slightly or set safely
-              if (srcData.length === bufSamples) {
-                outputChannel.set(srcData, writeOffset);
-              } else {
-                // Safe guard to prevent out-of-bounds
-                const copyLength = Math.min(srcData.length, bufSamples);
-                outputChannel.set(srcData.subarray(0, copyLength), writeOffset);
-              }
+              const copyLength = Math.min(srcData.length, bufSamples);
+              outputChannel.set(srcData.subarray(0, copyLength), writeOffset);
             }
             writeOffset += bufSamples;
             if (idx < decodedBuffers.length - 1) {
-              writeOffset += pauseSamples; // Skip pauseSamples to leave a silent gap
+              writeOffset += pauseSamples;
             }
           });
         }
 
         mainBufferRef.current = unifiedBuffer;
-        console.log(`[ManualPcmPlayer] Successfully decoded and concatenated ${decodedBuffers.length} audio segments with a 1.0s silence gap. Total duration: ${(totalSamples / sampleRate).toFixed(2)}s.`);
+        console.log(`[ManualPcmPlayer] Successfully decoded and concatenated ${decodedBuffers.length} audio segments. Total duration: ${(totalSamples / sampleRate).toFixed(2)}s.`);
 
       } catch (err) {
         console.error("Failed to construct audio buffer:", err);
@@ -283,7 +338,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     if (!audioCtxRef.current) return;
     try {
       const now = audioCtxRef.current.currentTime;
-      // Pentatonic scale notes: E5 (659.25Hz), G5 (783.99Hz), A5 (880Hz), B5 (987.77Hz), E6 (1318.51Hz)
       const notes = [659.25, 783.99, 880.00, 987.77, 1318.51];
       const noteDurations = [0.12, 0.12, 0.12, 0.12, 0.40];
       const startOffsets = [0, 0.10, 0.20, 0.30, 0.40];
@@ -295,7 +349,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
         osc.type = "sine";
         osc.frequency.setValueAtTime(freq, now + startOffsets[idx]);
 
-        // Jingle envelope: fast attack, exponential decay for chime bell sounds
         jingleGain.gain.setValueAtTime(0, now + startOffsets[idx]);
         jingleGain.gain.linearRampToValueAtTime(volume * 0.12, now + startOffsets[idx] + 0.01);
         jingleGain.gain.exponentialRampToValueAtTime(0.001, now + startOffsets[idx] + noteDurations[idx]);
@@ -311,9 +364,44 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     }
   };
 
-  // Start procedural background ambient music drone (Completely disabled as requested to prevent any annoying background noise)
+  // Start procedural background ambient music drone
   const startBgMusic = () => {
-    return;
+    if (!audioCtxRef.current || !isBgMusicEnabled) return;
+    try {
+      stopBgMusic();
+      const now = audioCtxRef.current.currentTime;
+
+      const masterGain = audioCtxRef.current.createGain();
+      masterGain.gain.setValueAtTime(bgMusicVolume * volume * 0.08, now);
+      masterGain.connect(audioCtxRef.current.destination);
+      bgGainRef.current = masterGain;
+
+      const baseFreqs = [261.63, 293.66, 329.63, 392.00];
+      const oscs: OscillatorNode[] = [];
+
+      baseFreqs.forEach((freq, idx) => {
+        const osc = audioCtxRef.current!.createOscillator();
+        osc.type = idx % 2 === 0 ? "sine" : "triangle";
+        const detune = (idx % 3) * 0.7 - 0.7;
+        osc.frequency.setValueAtTime(freq + detune, now);
+        osc.detune.setValueAtTime(detune * 2, now);
+
+        const gain = audioCtxRef.current!.createGain();
+        const vol = 0.05 + (idx * 0.01);
+        gain.gain.setValueAtTime(vol, now);
+        gain.gain.linearRampToValueAtTime(vol * 0.7, now + 1.5);
+
+        osc.connect(gain);
+        gain.connect(masterGain);
+
+        osc.start(now + idx * 0.15);
+        oscs.push(osc);
+      });
+
+      bgOscsRef.current = oscs;
+    } catch (err) {
+      console.warn("Failed to start background music:", err);
+    }
   };
 
   const stopBgMusic = () => {
@@ -349,7 +437,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
   // Adjust background music volume smoothly live
   useEffect(() => {
     if (bgGainRef.current && audioCtxRef.current) {
-      bgGainRef.current.gain.setTargetAtTime(bgMusicVolume * volume * 0.12, audioCtxRef.current.currentTime, 0.1);
+      bgGainRef.current.gain.setTargetAtTime(bgMusicVolume * volume * 0.08, audioCtxRef.current.currentTime, 0.1);
     }
   }, [bgMusicVolume, volume]);
 
@@ -357,7 +445,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
   useEffect(() => {
     if (sourceNodeRef.current && isPlaying) {
       sourceNodeRef.current.playbackRate.value = playbackRate;
-      // adjust startTimeCtx so elapsed offset computes accurately
       const elapsedSoFar = currentTime;
       startTimeCtxRef.current = audioCtxRef.current!.currentTime;
       elapsedOffsetRef.current = elapsedSoFar;
@@ -375,7 +462,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
       const elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * playbackRate;
 
       if (elapsedSeconds >= totalDuration) {
-        // finished playback
         setCurrentTime(totalDuration);
         setIsPlaying(false);
         stopAudio();
@@ -387,28 +473,21 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
 
       setCurrentTime(elapsedSeconds);
 
-      // Identify active segment highlight
       const activeIdx = segmentOffsets.findIndex(
         (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
       );
       if (activeIdx !== -1) {
         if (activeIdx !== activeSegmentIndexRef.current) {
-          // Play a sweet transition jingle between chapters (disabled to keep speech clean and avoid overlapping noise)
-          // if (activeIdx > 0) {
-          //   playJingle();
-          // }
           activeSegmentIndexRef.current = activeIdx;
           setActiveSegmentIndex(activeIdx);
         }
       }
 
-      // Read Web Audio frequency spectrum livedata
       if (analyserRef.current) {
         const dataArr = new Uint8Array(analyserRef.current.frequencyBinCount);
         analyserRef.current.getByteFrequencyData(dataArr);
         const values: number[] = [];
         for (let i = 0; i < 32; i++) {
-          // Normalize standard speech frequency weights nicely for display
           const weight = i < 8 ? 1.0 : i < 16 ? 1.3 : 1.6;
           values.push(Math.min(255, (dataArr[i] || 0) * weight));
         }
@@ -445,7 +524,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
 
     stopAudio();
 
-    // Resume AudioContext if suspended (browser constraints)
     if (audioCtxRef.current.state === "suspended") {
       audioCtxRef.current.resume();
     }
@@ -454,9 +532,8 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     source.buffer = mainBufferRef.current;
     source.playbackRate.value = playbackRate;
 
-    // Create and attach Analyser and Gain Node chain
     const analyser = audioCtxRef.current.createAnalyser();
-    analyser.fftSize = 64; // 32 spectrum bins
+    analyser.fftSize = 64;
     analyser.smoothingTimeConstant = 0.75;
     analyserRef.current = analyser;
 
@@ -468,10 +545,8 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     analyser.connect(gainNode);
     gainNode.connect(audioCtxRef.current.destination);
 
-    // Apply offset bounds
     const safeOffset = Math.max(0, Math.min(offset, totalDuration));
     
-    // Start playback
     source.start(0, safeOffset);
     sourceNodeRef.current = source;
 
@@ -513,11 +588,9 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
 
   const handlePlayPause = () => {
     if (isPlaying) {
-      // Pause
       setIsPlaying(false);
       stopAudio();
     } else {
-      // Play
       playAudio(currentTime >= totalDuration ? 0 : currentTime);
     }
   };
@@ -529,7 +602,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
       playAudio(newTime);
     } else {
       elapsedOffsetRef.current = newTime;
-      // find static segment index highlight manually
       const activeIdx = segmentOffsets.findIndex(
         (offset) => newTime >= offset.start && newTime <= offset.end
       );
@@ -568,13 +640,12 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     }
   };
 
-  // WAV File Downloader with server-side prepare flow for mobile/in-app/iframe compatibility
+  // WAV File Downloader với server-side prepare
   const handleDownloadWav = async () => {
     if (isPreparingDownload) return;
     setIsPreparingDownload(true);
 
     try {
-      // Fetch server-side prepared temporary file URL
       const response = await fetch("/api/prepare-wav", {
         method: "POST",
         headers: {
@@ -603,7 +674,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
       console.warn("Server-side prepare failed, falling back to local packaging...", err);
     }
 
-    // Client-side fallback if server api is unavailable or fails
+    // Client-side fallback
     try {
       const arrayBuffers = audioChunks.map(chunk => base64ToArrayBuffer(chunk));
       
@@ -644,7 +715,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
         `© 2026 CommuteCast Radio News | Vận hành bởi Gemini 3.5 & TTS`
       ].join("\n");
       
-      // Chiến lược sao chép thông minh chống lỗi Iframe Sandbox / HTTP không bảo mật
       let successful = false;
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(fullTranscript);
@@ -686,27 +756,20 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     const encodedTitle = encodeURIComponent(postTitle);
     const encodedUrl = encodeURIComponent(shareUrl);
 
-    // Phát hiện thiết bị di động (Mobile/Tablet)
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     if (isMobile) {
-      // Trên Mobile: Ưu tiên Deep Link mở trực tiếp ứng dụng Zalo đã cài trên máy để chia sẻ lập tức
       const mobileShareLink = `zalo://app?action=share&url=${encodedUrl}&title=${encodedTitle}`;
-      // Giao diện Web App hoặc đăng nhập Zalo sạch sẽ cho mobile nếu không có app hoặc chưa log in
       const backupWebLink = `https://zalo.me/share?url=${encodedUrl}&title=${encodedTitle}`;
       
-      // Chuyển hướng đến ứng dụng Zalo
       window.location.href = mobileShareLink;
 
-      // Đặt cơ chế tự động dự phòng: Nếu không mở được app Zalo (ví dụ máy chưa cài),
-      // thì sau 1.5 giây sẽ tự định tuyến sang trang web của Zalo - nơi có giao diện đăng nhập chia sẻ cực tiện lợi
       setTimeout(() => {
         if (!document.hidden) {
           window.location.href = backupWebLink;
         }
       }, 1500);
     } else {
-      // Trên Desktop: Sử dụng liên kết Zalo Share Web mở ra Popup đăng nhập bằng QR Code / Số điện thoại để chia sẻ
       const webShareLink = `https://sp.zalo.me/share_to_zalo?url=${encodedUrl}&title=${encodedTitle}`;
       window.open(webShareLink, "_blank", "width=600,height=500,scrollbars=yes,resizable=yes");
     }
@@ -717,7 +780,6 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     window.open(shareUrl, "_blank", "width=600,height=550,scrollbars=yes,resizable=yes");
   };
 
-  // Helper formatting for seconds to MM:SS
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -790,12 +852,10 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
           </p>
         </div>
 
-        {/* Dynamic Waveform Visualizer - Connected directly to the real frequency analyzer */}
+        {/* Dynamic Waveform Visualizer */}
         <div className="relative z-10 h-14 flex items-end justify-between gap-[3px] px-2.5 mb-4 bg-slate-950/60 rounded-2xl py-3 border border-slate-850">
           {frequencyData.map((val, barIdx) => {
-            // Scale val (0-255) to height (typically 4px - 44px)
             const heightPx = Math.max(4, Math.min(44, (val / 255) * 40));
-            // Highlight bar index according to temporal progress
             const currentHighlight = (barIdx / 32) <= (currentTime / (totalDuration || 1));
             
             return (
@@ -994,7 +1054,46 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
             />
           </div>
 
-          {/* Background Music Config Removed */}
+          {/* Background Music Config */}
+          <div className="flex flex-col gap-2 justify-center col-span-1">
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5 select-none">
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                <span>{uiLanguage === "vi" ? "Nhạc nền" : "Background"}</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400">
+                  {isBgMusicEnabled ? "Bật" : "Tắt"}
+                </span>
+                <button
+                  onClick={() => setIsBgMusicEnabled(!isBgMusicEnabled)}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${
+                    isBgMusicEnabled ? "bg-cyan-500" : "bg-slate-300"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                      isBgMusicEnabled ? "translate-x-5" : ""
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+            {isBgMusicEnabled && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400">Âm lượng</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={0.5}
+                  step={0.02}
+                  value={bgMusicVolume}
+                  onChange={(e) => setBgMusicVolume(parseFloat(e.target.value))}
+                  className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Sharing Utility Group */}
@@ -1156,7 +1255,7 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
                   {seg.text}
                 </p>
 
-                {/* Bullets takeaways (if chapters have them) */}
+                {/* Bullets takeaways */}
                 {seg.bullets && seg.bullets.length > 0 && (
                   <div className={`mt-3 pl-2.5 border-l-2 transition-colors duration-300 flex flex-col gap-1.5 ${
                     isActive ? "border-cyan-450" : "border-slate-200"
