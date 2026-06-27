@@ -739,7 +739,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     const callEdgeTTSForChunk = async (chunk: string): Promise<string> => {
       const voiceMap: Record<string, string> = {
         "vi-HN": "vi-VN-AnNeural", // Female Northern (Hanoi) - Highly realistic and professional
-        "vi-HCM": "vi-VN-NamMinhNeural", // Male Southern (HCM)
+        "vi-HCM": "vi-VN-HoaiMyNeural", // Female Southern (HCM) - Highly realistic, warm and professional
         "en-US": "en-US-AriaNeural",
         "en-UK": "en-GB-SoniaNeural",
       };
@@ -810,17 +810,33 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     // BẮT BUỘC phải được tổng hợp bởi CÙNG MỘT ENGINE duy nhất. Nếu một engine bị lỗi giữa chừng, hệ thống sẽ tự động
     // bỏ qua nó và thử lại toàn bộ yêu cầu từ đầu bằng engine dự phòng tiếp theo.
     const now = Date.now();
-    let activeEngine: "gemini" | "gcloud" | "edge" | "translate" = "gemini";
+    let activeEngine: "gemini" | "gcloud" | "edge" | "translate" = isVi ? "edge" : "gemini";
 
-    if (now < globalGeminiTtsDisabledUntil) {
-      if (now < globalGCloudTtsDisabledUntil) {
-        if (now < globalEdgeTtsDisabledUntil) {
+    if (isVi) {
+      // Đối với tiếng Việt, chúng ta KHÔNG DÙNG engine Gemini vì Gemini TTS Preview chưa hỗ trợ tiếng Việt bản xứ (phát âm ngọng, lai tiếng Anh).
+      // Thay vào đó, chúng ta ĐẶT "edge" (Microsoft Azure Neural) làm ưu tiên số 1 - đây là bộ giọng đọc chuẩn phòng thu tuyệt vời nhất hiện nay.
+      if (now < globalEdgeTtsDisabledUntil) {
+        if (now < globalGCloudTtsDisabledUntil) {
           activeEngine = "translate";
         } else {
-          activeEngine = "edge";
+          activeEngine = "gcloud";
         }
       } else {
-        activeEngine = "gcloud";
+        activeEngine = "edge";
+      }
+    } else {
+      if (now < globalGeminiTtsDisabledUntil) {
+        if (now < globalGCloudTtsDisabledUntil) {
+          if (now < globalEdgeTtsDisabledUntil) {
+            activeEngine = "translate";
+          } else {
+            activeEngine = "edge";
+          }
+        } else {
+          activeEngine = "gcloud";
+        }
+      } else {
+        activeEngine = "gemini";
       }
     }
 
@@ -857,17 +873,30 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         const errMsg = err.message || String(err);
         console.warn(`[TTS] Engine "${activeEngine}" failed during request: ${errMsg}. Automatically discarding and rolling back to next fallback.`);
 
-        if (activeEngine === "gemini") {
-          globalGeminiTtsDisabledUntil = Date.now() + 5 * 60 * 1000; // Disable for 5 mins
-          activeEngine = "gcloud";
-        } else if (activeEngine === "gcloud") {
-          globalGCloudTtsDisabledUntil = Date.now() + 5 * 60 * 1000;
-          activeEngine = "edge";
-        } else if (activeEngine === "edge") {
-          globalEdgeTtsDisabledUntil = Date.now() + 5 * 60 * 1000;
-          activeEngine = "translate";
+        if (isVi) {
+          // Fallback flow specifically for Vietnamese (no Gemini)
+          if (activeEngine === "edge") {
+            globalEdgeTtsDisabledUntil = Date.now() + 5 * 60 * 1000;
+            activeEngine = "gcloud";
+          } else if (activeEngine === "gcloud") {
+            globalGCloudTtsDisabledUntil = Date.now() + 5 * 60 * 1000;
+            activeEngine = "translate";
+          } else {
+            throw new Error(`All Vietnamese voice engines failed to synthesize briefing segment. Last error: ${errMsg}`);
+          }
         } else {
-          throw new Error(`All voice engines failed to synthesize briefing segment. Last error: ${errMsg}`);
+          if (activeEngine === "gemini") {
+            globalGeminiTtsDisabledUntil = Date.now() + 5 * 60 * 1000; // Disable for 5 mins
+            activeEngine = "gcloud";
+          } else if (activeEngine === "gcloud") {
+            globalGCloudTtsDisabledUntil = Date.now() + 5 * 60 * 1000;
+            activeEngine = "edge";
+          } else if (activeEngine === "edge") {
+            globalEdgeTtsDisabledUntil = Date.now() + 5 * 60 * 1000;
+            activeEngine = "translate";
+          } else {
+            throw new Error(`All voice engines failed to synthesize briefing segment. Last error: ${errMsg}`);
+          }
         }
       }
     }
