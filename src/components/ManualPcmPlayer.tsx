@@ -216,27 +216,33 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
         // Calculate sizes, channels, and offsets
         const sampleRate = decodedBuffers[0].sampleRate;
         const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
+        const pauseSamples = Math.round(sampleRate * 1.0); // 1.0-second silence pause for breathing room
         
         let totalSamples = 0;
         const offsets: { start: number; end: number }[] = [];
 
-        decodedBuffers.forEach((buf) => {
+        decodedBuffers.forEach((buf, idx) => {
           const startSec = totalSamples / sampleRate;
-          totalSamples += Math.round(buf.duration * sampleRate);
+          const durationSamples = Math.round(buf.duration * sampleRate);
+          totalSamples += durationSamples;
           const endSec = totalSamples / sampleRate;
           offsets.push({ start: startSec, end: endSec });
+          
+          if (idx < decodedBuffers.length - 1) {
+            totalSamples += pauseSamples;
+          }
         });
 
         if (!active) return;
         setSegmentOffsets(offsets);
         setTotalDuration(totalSamples / sampleRate);
 
-        // Concatenate buffers into a single unified AudioBuffer
+        // Concatenate buffers into a single unified AudioBuffer with silent pauses
         const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
         for (let channel = 0; channel < numberOfChannels; channel++) {
           const outputChannel = unifiedBuffer.getChannelData(channel);
           let writeOffset = 0;
-          decodedBuffers.forEach((buf) => {
+          decodedBuffers.forEach((buf, idx) => {
             const bufSamples = Math.round(buf.duration * sampleRate);
             if (channel < buf.numberOfChannels) {
               const srcData = buf.getChannelData(channel);
@@ -250,11 +256,14 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
               }
             }
             writeOffset += bufSamples;
+            if (idx < decodedBuffers.length - 1) {
+              writeOffset += pauseSamples; // Skip pauseSamples to leave a silent gap
+            }
           });
         }
 
         mainBufferRef.current = unifiedBuffer;
-        console.log(`[ManualPcmPlayer] Successfully decoded and concatenated ${decodedBuffers.length} audio segments. Total duration: ${(totalSamples / sampleRate).toFixed(2)}s.`);
+        console.log(`[ManualPcmPlayer] Successfully decoded and concatenated ${decodedBuffers.length} audio segments with a 1.0s silence gap. Total duration: ${(totalSamples / sampleRate).toFixed(2)}s.`);
 
       } catch (err) {
         console.error("Failed to construct audio buffer:", err);
@@ -384,10 +393,10 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
       );
       if (activeIdx !== -1) {
         if (activeIdx !== activeSegmentIndexRef.current) {
-          // Play a sweet transition jingle between chapters
-          if (activeIdx > 0) {
-            playJingle();
-          }
+          // Play a sweet transition jingle between chapters (disabled to keep speech clean and avoid overlapping noise)
+          // if (activeIdx > 0) {
+          //   playJingle();
+          // }
           activeSegmentIndexRef.current = activeIdx;
           setActiveSegmentIndex(activeIdx);
         }

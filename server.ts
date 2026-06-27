@@ -1923,7 +1923,18 @@ app.post("/api/prepare-wav", (req, res): any => {
     if (!chunks || chunks.length === 0) return res.status(400).send("No audio chunks provided.");
 
     const arrayBuffers = chunks.map(chunk => Buffer.from(chunk, "base64"));
-    const concatenatedPCM = Buffer.concat(arrayBuffers);
+    
+    // Insert 1.0 second silence (48000 bytes for 24000Hz 16-bit Mono PCM) between segments for natural breathing pause
+    const silenceBuffer = Buffer.alloc(48000);
+    const finalChunks: Buffer[] = [];
+    arrayBuffers.forEach((buf, idx) => {
+      finalChunks.push(buf);
+      if (idx < arrayBuffers.length - 1) {
+        finalChunks.push(silenceBuffer);
+      }
+    });
+
+    const concatenatedPCM = Buffer.concat(finalChunks);
     const wavBuffer = encodeWavHeaderNode(concatenatedPCM, 24000);
 
     const safeTitle = (title || "CommuteSummary").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1965,7 +1976,18 @@ app.post("/api/download-wav-file", (req, res): any => {
     if (!chunks || chunks.length === 0) return res.status(400).send("No audio chunks provided.");
 
     const arrayBuffers = chunks.map(chunk => Buffer.from(chunk, "base64"));
-    const concatenatedPCM = Buffer.concat(arrayBuffers);
+    
+    // Insert 1.0 second silence (48000 bytes for 24000Hz 16-bit Mono PCM) between segments for natural breathing pause
+    const silenceBuffer = Buffer.alloc(48000);
+    const finalChunks: Buffer[] = [];
+    arrayBuffers.forEach((buf, idx) => {
+      finalChunks.push(buf);
+      if (idx < arrayBuffers.length - 1) {
+        finalChunks.push(silenceBuffer);
+      }
+    });
+
+    const concatenatedPCM = Buffer.concat(finalChunks);
     const wavBuffer = encodeWavHeaderNode(concatenatedPCM, 24000);
 
     const safeTitle = (title || "CommuteSummary").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -2066,12 +2088,26 @@ app.post("/api/podcast/publish", async (req, res): Promise<any> => {
       return res.json({ success: true, audioUrl: existing.audioUrl, message: "This episode is already published!" });
     }
 
-    const fullAudioBase64 = briefing.audioChunks.join("");
-    const rawAudioBuffer = Buffer.from(fullAudioBase64, "base64");
-
-    const isMp3 = isMp3Buffer(rawAudioBuffer);
+    const rawBuffers = briefing.audioChunks.map((chunk: string) => Buffer.from(chunk, "base64"));
+    const isMp3 = isMp3Buffer(rawBuffers[0] || Buffer.alloc(0));
     const contentType = isMp3 ? "audio/mpeg" : "audio/wav";
     const fileExt = isMp3 ? "mp3" : "wav";
+
+    let rawAudioBuffer: Buffer;
+    if (!isMp3) {
+      // It is 16-bit PCM. Insert 1.0 second silence pause (48000 bytes for 24000Hz mono PCM) between segments for natural breathing room
+      const silenceBuffer = Buffer.alloc(48000);
+      const segmentsWithSilence: Buffer[] = [];
+      rawBuffers.forEach((buf, idx) => {
+        segmentsWithSilence.push(buf);
+        if (idx < rawBuffers.length - 1) {
+          segmentsWithSilence.push(silenceBuffer);
+        }
+      });
+      rawAudioBuffer = Buffer.concat(segmentsWithSilence);
+    } else {
+      rawAudioBuffer = Buffer.concat(rawBuffers);
+    }
 
     let finalAudioBuffer = rawAudioBuffer;
     if (!isMp3) {
