@@ -2383,14 +2383,18 @@ app.get("/api/supabase-config", (req, res) => {
 
 // ==================== SERVE FRONTEND ====================
 async function serveApp() {
-  if (process.env.NODE_ENV !== "production") {
+  const distPath = path.join(process.cwd(), "dist");
+  const hasDist = fs.existsSync(distPath);
+
+  if (process.env.NODE_ENV !== "production" || !hasDist) {
+    console.log("[CommuteCast Backend] Starting Vite in middleware mode...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    console.log("[CommuteCast Backend] Serving static files from dist...");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
