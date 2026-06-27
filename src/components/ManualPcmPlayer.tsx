@@ -102,16 +102,16 @@ export default function ManualPcmPlayer({ payload, audioChunks, title, preferenc
     setCurrentPlayingIndex(activeSegmentIndex);
   }, [activeSegmentIndex]);
 
-  // Handle auto-scroll into view when segment changes
-  useEffect(() => {
-    const activeEl = segmentRefs.current[currentPlayingIndex];
-    if (activeEl) {
-      activeEl.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    }
-  }, [currentPlayingIndex]);
+  // Handle auto-scroll into view when segment changes - DISABLED to prevent text list jumping and layout disruption
+  // useEffect(() => {
+  //   const activeEl = segmentRefs.current[currentPlayingIndex];
+  //   if (activeEl) {
+  //     activeEl.scrollIntoView({
+  //       behavior: "smooth",
+  //       block: "center",
+  //     });
+  //   }
+  // }, [currentPlayingIndex]);
 
   // Sync playbackRate with user preferences speed
   useEffect(() => {

@@ -646,10 +646,10 @@ app.post("/api/tts", async (req, res): Promise<any> => {
 
       if (voice === "vi-HN") {
         voiceName = "Kore";
-        accentInstruction = "Speak this text with a highly precise standard Northern Vietnamese (Hanoi / Hà Nội) accent. Pronounce every syllable cleanly, in standard Northern broadcaster cadence.";
+        accentInstruction = "ROLE & STYLE: You are a premium, highly professional female radio broadcaster speaking with a clear, prestigious, standard Northern Vietnamese (Hà Nội) accent. Speak with absolute clarity, deep warmth, and professional newsroom cadence. Every word must be beautifully articulated with perfect Northern pronunciation. PACING & EMOTION: Speak naturally, pacing your speed like an elite newscaster. Use natural pauses at commas and periods to create breathing space. Avoid any flat, robotic, or mechanical text-to-speech cadence. Infuse elegant vocal modulation, subtle rising and falling intonations to maintain engagement, and deliver with professional studio quality.";
       } else if (voice === "vi-HCM") {
         voiceName = "Zephyr";
-        accentInstruction = "Speak this text with a warm, natural Southern Vietnamese (Ho Chi Minh City / Sài Gòn) accent. Pronounce with Southern dialect cadence, friendly, sweet, and engaging.";
+        accentInstruction = "ROLE & STYLE: You are a premium, highly professional female radio broadcaster speaking with a warm, charming, standard Southern Vietnamese (Hồ Chí Minh City / Sài Gòn) accent. Speak with absolute clarity, sweet friendliness, and elite newsroom cadence. Every word must be beautifully articulated with standard Southern pronunciation. PACING & EMOTION: Speak naturally, pacing your speed like an elite newscaster. Use natural pauses at commas and periods to create breathing space. Avoid any flat, robotic, or mechanical text-to-speech cadence. Infuse elegant vocal modulation, sweet local cadence, and deliver with professional studio quality.";
       } else if (voice === "en-UK") {
         voiceName = "Puck";
         accentInstruction = "Speak this text with a highly refined British English accent (Received Pronunciation - RP). Pronounce with clear, elegant British broadcaster cadence and superb pronunciation.";
@@ -693,12 +693,12 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       }
 
       const voiceMap: Record<string, string> = {
-        "vi-HN": "vi-VN-Neural2-D", // Male Northern
+        "vi-HN": "vi-VN-Neural2-C", // Female Northern (Hanoi)
         "vi-HCM": "vi-VN-Neural2-A", // Female Southern
         "en-US": "en-US-Neural2-F",
         "en-UK": "en-GB-Neural2-B",
       };
-      const gcloudVoiceName = voiceMap[voice] || "vi-VN-Neural2-D";
+      const gcloudVoiceName = voiceMap[voice] || "vi-VN-Neural2-C";
       const gcloudLanguageCode = voice?.startsWith("vi") ? "vi-VN" : (voice?.startsWith("en-UK") ? "en-GB" : "en-US");
 
       let speakingRate = 1.0;
@@ -738,8 +738,8 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     // --- HÀM GỌI EDGE TTS GỐC CHO CHUNK ---
     const callEdgeTTSForChunk = async (chunk: string): Promise<string> => {
       const voiceMap: Record<string, string> = {
-        "vi-HN": "vi-VN-HoangMinhNeural",
-        "vi-HCM": "vi-VN-NamMinhNeural",
+        "vi-HN": "vi-VN-AnNeural", // Female Northern (Hanoi) - Highly realistic and professional
+        "vi-HCM": "vi-VN-NamMinhNeural", // Male Southern (HCM)
         "en-US": "en-US-AriaNeural",
         "en-UK": "en-GB-SoniaNeural",
       };
