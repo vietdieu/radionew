@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
-import * as edgeTTS from "edge-tts";
+import { tts as runEdgeTTS } from "edge-tts";
 import fs from "fs";
 import { Storage } from "@google-cloud/storage";
 import { TextToSpeechClient } from "@google-cloud/text-to-speech";
@@ -743,21 +743,14 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       else if (tone === "slow") rate = "-15%";
 
       try {
-        const ttsFn = typeof edgeTTS.tts === "function" 
-          ? edgeTTS.tts 
-          : ((edgeTTS as any).default?.tts || (edgeTTS as any).default || edgeTTS);
-
-        if (typeof ttsFn === "function") {
-          const audioBuffer = await ttsFn(chunk, {
-            voice: edgeVoice,
-            rate: rate,
-            pitch: "0%"
-          });
-          if (audioBuffer && audioBuffer.length > 0) {
-            return audioBuffer.toString("base64");
-          }
+        const audioBuffer = await runEdgeTTS(chunk, {
+          voice: edgeVoice,
+          rate: rate,
+          pitch: "0%"
+        });
+        if (audioBuffer && audioBuffer.length > 0) {
+          return audioBuffer.toString("base64");
         }
-
         throw new Error("Edge TTS method returned empty response.");
       } catch (err: any) {
         throw new Error(`Edge TTS API error: ${err.message || err}`);
