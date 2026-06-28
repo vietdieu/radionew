@@ -24,6 +24,7 @@ import { useUserPreferences } from "./UserPreferencesProvider";
 import DrivingMode from "./DrivingMode";
 import { motion, AnimatePresence } from "motion/react";
 import ShareModal from "./ShareModal";
+import { ClearDataButton } from './ClearDataButton';
 
 interface ManualPcmPlayerProps {
   payload: SummaryPayload;
@@ -1151,6 +1152,24 @@ useEffect(() => {
           </div>
         </div>
 
+              {/* ===== QUẢN LÝ BỘ NHỚ BẢN TIN ===== */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mt-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h5 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <span className="text-lg">💾</span>
+                Quản lý bộ nhớ bản tin
+              </h5>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Xóa dữ liệu cục bộ (chỉ trên máy này) để giải phóng bộ nhớ.
+              </p>
+            </div>
+            <div className="flex-shrink-0">
+              <ClearDataButton />
+            </div>
+          </div>
+        </div>
+        
         {/* Sharing Utility Group */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <button
