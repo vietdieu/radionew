@@ -201,24 +201,24 @@ function parseGeminiError(error: any, isVi: boolean = true, isTTS: boolean = fal
   ) {
     if (isTTS) {
       if (isVi) {
-        return "QUOTA_LIMIT: Bạn đã tạm thời sử dụng hết số lượt chuyển đổi giọng nói miễn phí. Để tiếp tục trải nghiệm, hãy phát các bản tin đã lưu ở mục 'Lịch sử phát thanh'!";
+        return "QUOTA_LIMIT: Bạn đã tạm thời sử dụng hết số lượt chuyển đổi giọng nói miễn phí của Google TTS (Giới hạn tối đa là 10 lượt gọi mỗi ngày của mô hình thử nghiệm gemini-3.1-flash-tts). Để tiếp tục trải nghiệm toàn bộ thiết kế Trình Player & Hiệu ứng phòng thu live, bạn hãy phát các bản tin mẫu lưu sẵn ở mục 'Lịch sử phát thanh' (chứa tệp âm thanh hoàn chỉnh) ngay bên dưới!";
       } else {
-        return "QUOTA_LIMIT: You have temporarily reached the free-tier daily call limit. To continue, play pre-cached briefings from 'Commute Briefing Archive'!";
+        return "QUOTA_LIMIT: You have temporarily reached Google's free-tier daily call limit for the experimental 'gemini-3.1-flash-tts-preview' model (capped at exactly 10 requests per day per project). To continue experiencing the dynamic live player spectrum and effects, simply select and play any pre-cached briefings from the 'Commute Briefing Archive' below!";
       }
     } else {
       if (isVi) {
-        return "QUOTA_LIMIT: Bạn đã tạm thời vượt quá giới hạn cuộc gọi miễn phí. Vui lòng đợi 30 giây rồi thử lại!";
+        return "QUOTA_LIMIT: Bạn đã tạm thời vượt quá giới hạn cuộc gọi miễn phí của mô hình Gemini (Giới hạn tài nguyên). Vui lòng đợi 30 giây rùi thử lại hoặc bấm phát các bản tin lưu sẵn ở mục 'Lịch sử phát thanh' bên dưới!";
       } else {
-        return "QUOTA_LIMIT: You have hit the default free-tier rate limits. Please wait 30 seconds before retrying!";
+        return "QUOTA_LIMIT: You have hit the default free-tier rate limits for the Gemini model. Please wait 30 seconds before retrying, or explore our pre-cached archives below!";
       }
     }
   }
 
   if (lowercaseMsg.includes("api_key_invalid") || lowercaseMsg.includes("api key not valid") || lowercaseMsg.includes("invalid api key") || lowercaseMsg.includes("key is invalid")) {
     if (isVi) {
-      return "LỖI: Khóa API Gemini của bạn không hợp lệ hoặc đã bị khóa. Vui lòng kiểm tra lại thiết lập Secrets.";
+      return "LỖI: Khóa API Gemini của bạn không hợp lệ hoặc đã bị khóa. Vui lòng kiểm tra lại thiết lập Secrets trong AI Studio.";
     } else {
-      return "ERROR: Your Gemini API key is invalid or suspended. Please check your Secrets configuration.";
+      return "ERROR: Your Gemini API key is invalid or suspended. Please check your Secrets configuration in AI Studio.";
     }
   }
 
@@ -293,10 +293,12 @@ async function getSharedBriefings(): Promise<any[]> {
     return cachedSharedBriefingsInMem;
   }
 
+  // Try local first
   if (fs.existsSync(SHARED_BRIEFINGS_JSON_PATH)) {
     try {
       const data = fs.readFileSync(SHARED_BRIEFINGS_JSON_PATH, "utf-8");
       cachedSharedBriefingsInMem = JSON.parse(data);
+      // Background sync from Supabase
       loadSharedBriefingsFromSupabaseAsync().then((cloudBrefs) => {
         if (cloudBrefs && cloudBrefs.length > 0) {
           cachedSharedBriefingsInMem = cloudBrefs;
@@ -308,6 +310,7 @@ async function getSharedBriefings(): Promise<any[]> {
     }
   }
 
+  // Try Supabase if local not exists
   const cloudBrefs = await loadSharedBriefingsFromSupabaseAsync();
   cachedSharedBriefingsInMem = cloudBrefs;
   return cloudBrefs;
@@ -324,6 +327,7 @@ app.post("/api/share", async (req, res): Promise<any> => {
     const id = briefing.id;
     const briefingsList = await getSharedBriefings();
     
+    // Check if it already exists
     const existingIndex = briefingsList.findIndex((item) => item.id === id);
     if (existingIndex > -1) {
       briefingsList[existingIndex] = briefing;
@@ -331,8 +335,10 @@ app.post("/api/share", async (req, res): Promise<any> => {
       briefingsList.push(briefing);
     }
 
+    // Save locally
     fs.writeFileSync(SHARED_BRIEFINGS_JSON_PATH, JSON.stringify(briefingsList, null, 2));
 
+    // Sync in background to Supabase
     saveSharedBriefingsToSupabaseAsync(briefingsList).catch(err => {
       console.error("Failed to sync shared briefings to Supabase in background:", err);
     });
@@ -393,10 +399,10 @@ LANGUAGE RULE: The entire report MUST be generated in VIETNAMESE (Tiếng Việt
     } else if (language === "bilingual") {
       languageInstructions = `
 LANGUAGE RULE: The entire report MUST be written in a graceful, engaging BILINGUAL (English / Vietnamese) format.
-- In 'introduction', 'scriptText' of each chapter, and 'conclusion': Every main concept or sentence should first be spoken in English and then immediately followed by its friendly, natural translation in Vietnamese separated by a slash (/).
+- In 'introduction', 'scriptText' of each chapter, and 'conclusion': Every main concept or sentence should first be spoken in English and then immediately followed by its friendly, natural translation in Vietnamese separated by a slash (/) (for example: "Good morning dynamic commuters! Today looks like a rainy day in Hanoi, so drive safely. / Chào buổi sáng quý thính giả năng động! Hôm nay dự báo sẽ là một ngày mưa tại Hà Nội, vì vậy hãy lái xe thật an toàn nhé.").
 - Keep the alternating flow extremely smooth and natural for speech synthesis.
-- Each chapter's 'topic' and the main 'title' should use bilingual slash/pipe formatting.
-- The 'summaryBullets' list items should also be presented in bilingual pairs.`;
+- Each chapter's 'topic' and the main 'title' should use bilingual slash/pipe formatting (e.g. "Tech Breakthroughs / Những đột phá Công nghệ" or "Space Discovery / Khám phá Không gian").
+- The 'summaryBullets' list items should also be presented in bilingual pairs (e.g. "Quantum chip uses 40 percent less power. / Chip lượng tử sử dụng ít năng lượng hơn 40 phần trăm.").`;
     } else {
       languageInstructions = `
 LANGUAGE RULE: The entire report MUST be generated in ENGLISH.
@@ -410,23 +416,27 @@ ${languageInstructions}
 
 IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 1. The script fields MUST be written EXACTLY as they should be spoken out loud by a seasoned news anchor.
-2. NHÂN VẬT & PHONG THÁI PHÁT THANH VIÊN KỲ CỰU:
+2. NHÂN VẬT & PHONG THÁI PHÁT THANH VIÊN KỲ CỰU (VIETNAMESE ANCHOR ROLE):
    - Ngôn từ tự nhiên, lưu loát, lôi cuốn, mang phong thái của một biên tập viên thời sự cao cấp dẫn bản tin trực tiếp.
-   - Tránh cách hành văn khô khan, rập khuôn hay máy móc. Hãy sử dụng từ ngữ kết nối tự nhiên giữa các câu.
-   - Cách sắp xếp câu từ rõ ràng, rành mạch để khi đọc lên tạo cảm giác trò chuyện thân thiện, đáng tin cậy.
-3. KHỬ TẠP ÂM & KHÔNG GIAN THỞ:
+   - Tránh cách hành văn khô khan, rập khuôn hay máy móc. Hãy sử dụng từ ngữ kết nối tự nhiên giữa các câu (như "Thưa quý vị", "Tiếp tục bản tin", "Đáng chú ý", "Quay trở lại với", "Kính chúc quý vị một ngày mới").
+   - Cách sắp xếp câu từ rõ ràng, rành mạch để khi đọc lên tạo cảm giác trò chuyện thân thiện, đáng tin cậy nhưng vẫn đầy cuốn hút, giữ chân người nghe suốt hành trình di chuyển.
+3. KHỬ TẠP ÂM & KHÔNG GIAN THỞ (PUNCTUATION & PACING FOR STUDIO QUALITY):
    - Viết các câu ngắn, rõ nghĩa, súc tích (tối đa 15-20 từ mỗi câu).
-   - Sử dụng dấu phẩy (,), dấu chấm phẩy (;) và dấu chấm (.) một cách có tính toán nghệ thuật để định hình nhịp điệu ngắt nghỉ tự nhiên.
-   - Tuyệt đối KHÔNG sử dụng ký tự đặc biệt, dấu sao (*), dấu gạch ngang (-) hay định dạng markdown trong các trường "introduction", "scriptText", và "conclusion".
-4. "introduction": Lời chào mừng nồng ấm, lôi cuốn chuẩn phong cách phát thanh. Tích hợp mượt mà thông tin thời tiết và tình trạng giao thông.
+   - Sử dụng dấu phẩy (,), dấu chấm phẩy (;) và dấu chấm (.) một cách có tính toán nghệ thuật để định hình nhịp điệu ngắt nghỉ tự nhiên cho giọng đọc, giúp người nghe dễ tiếp thu thông tin mà không cảm thấy dồn dập hay hụt hơi.
+   - Tuyệt đối KHÔNG sử dụng ký tự đặc biệt, dấu sao (*), dấu gạch ngang (-) hay định dạng markdown trong các trường "introduction", "scriptText", và "conclusion". Hãy viết hẳn bằng chữ chữ số hoặc ký hiệu nếu muốn đọc chuẩn (ví dụ: dùng "phần trăm" thay cho "%", "đô la" thay cho "$", "và" thay cho "&").
+4. "introduction": Lời chào mừng nồng ấm, lôi cuốn chuẩn phong cách phát thanh. Bạn PHẢI tích hợp mượt mà thông tin thời tiết thực tế/giả định và tình trạng giao thông thời gian thực tùy theo loại hình di chuyển (${commuteType}) để đưa ra những lời cảnh báo giao thông an toàn và hữu ích trước khi bắt đầu hành trình.
 5. "chapters": Danh sách các chương nội dung hấp dẫn dựa trên tin tức thô.
-6. "conclusion": Lời kết đầy cảm xúc, chúc thượng lộ bình an.
+   - "topic": Tiêu đề chương ngắn gọn, giật gân, cuốn hút.
+   - "scriptText": Kịch bản nói chi tiết, truyền cảm, nhịp điệu nhả chữ linh hoạt, nhấn nhá chuyên nghiệp.
+   - "summaryBullets": 2-3 ý tóm tắt ngắn gọn, trực quan để hiển thị trên màn hình ứng dụng.
+6. "conclusion": Lời kết đầy cảm xúc, chúc thượng lộ bình an, kết hợp các mẹo an toàn giao thông thông minh phù hợp với phong cách (${tone}) và loại hình di chuyển (${commuteType}).
 7. Tùy chỉnh nội dung tóm tắt theo yêu cầu tiêu điểm: "${focus}".
 8. Tuân thủ độ dài hướng dẫn: ${lengthGuidelines}
 9. Áp dụng hướng dẫn riêng từ người dùng nếu có: "${customInstructions}"`;
 
     const promptText = `Generate a news broadcast report from the following raw news materials:\n\n${content}`;
 
+    // 1. LẤY THỜI TIẾT MIỄN PHÍ
     let weatherData = "No weather data available.";
     if (preferences?.locationName) {
       try {
@@ -440,6 +450,7 @@ IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
       }
     }
 
+    // 2. CHÈN THÔNG TIN VÀO PROMPT
     const systemPromptEnhanced = `${systemPrompt}\nThông tin thời tiết hiện tại: ${weatherData}. \nTuyến đường người dùng di chuyển: ${preferences?.commuteRoute || "Không rõ"}. Hãy chủ động dùng công cụ tìm kiếm tích hợp (Google Search Tool) để quét tình trạng giao thông thực tế tại tuyến đường này nếu có tin tức mới.`;
 
     const hasGroq = !!process.env.GROQ_API_KEY;
@@ -554,20 +565,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // ================== API TTS ==================
-// ===== CẢI TIẾN: Chunking text với SSML breaks =====
-function chunkTextForTTS(text: string, maxChars = 350): string[] {
-  // Thêm break tags cho dấu câu
-  let processed = text
-    .replace(/\. /g, '. <break time="300ms"/> ')
-    .replace(/\, /g, ', <break time="150ms"/> ')
-    .replace(/\? /g, '? <break time="400ms"/> ')
-    .replace(/\! /g, '! <break time="400ms"/> ')
-    .replace(/; /g, '; <break time="200ms"/> ')
-    .replace(/\: /g, ': <break time="200ms"/> ')
-    .replace(/…/g, '<break time="500ms"/>');
-
-  // Split by [BREAK_1S]
-  const rawSegments = processed.split(/\[BREAK_1S\]/i);
+// CẢI TIẾN: Chunking text tối ưu cho tiếng Việt
+function chunkTextForTTS(text: string, maxChars = 250): string[] {
+  // Split by [BREAK_1S] first
+  const rawSegments = text.split(/\[BREAK_1S\]/i);
   const finalChunks: string[] = [];
 
   for (let segment of rawSegments) {
@@ -577,6 +578,7 @@ function chunkTextForTTS(text: string, maxChars = 350): string[] {
     if (segment.length <= maxChars) {
       finalChunks.push(segment);
     } else {
+      // Split by sentence boundaries với dấu câu tiếng Việt đầy đủ
       const sentences = segment.split(/(?<=[.?!;:…])\s+|\n+|(?<=[.?!;:…])\s*/);
       let currentChunk = "";
 
@@ -591,10 +593,12 @@ function chunkTextForTTS(text: string, maxChars = 350): string[] {
           if (currentChunk) {
             finalChunks.push(currentChunk);
           }
+          // Xử lý câu dài - cắt tại vị trí an toàn
           if (trimmedSentence.length > maxChars) {
             let start = 0;
             while (start < trimmedSentence.length) {
               let end = Math.min(start + maxChars, trimmedSentence.length);
+              // Tìm vị trí cắt an toàn (sau dấu cách hoặc dấu câu)
               const lastSpace = trimmedSentence.lastIndexOf(' ', end);
               const lastPunct = trimmedSentence.lastIndexOf('.', end);
               const lastComma = trimmedSentence.lastIndexOf(',', end);
@@ -620,40 +624,48 @@ function chunkTextForTTS(text: string, maxChars = 350): string[] {
   return finalChunks.filter(chunk => chunk.length > 0);
 }
 
-// ===== CẢI TIẾN: Voice mapping với voices tốt nhất =====
+// CẢI TIẾN: Voice mapping với voices chất lượng cao nhất
 const EDGE_VOICE_MAP: Record<string, string> = {
-  "vi-HN": "vi-VN-HoaiMyNeural",
-  "vi-HCM": "vi-VN-NamMinhNeural",
-  "vi": "vi-VN-HoaiMyNeural",
-  "en-US": "en-US-JennyNeural",
-  "en-UK": "en-GB-SoniaNeural",
-  "en": "en-US-JennyNeural",
+  "vi-HN": "vi-VN-HoaiMyNeural", // Female Northern - 2024, chất lượng xuất sắc
+  "vi-HCM": "vi-VN-NamMinhNeural", // Male Southern - tự nhiên, ấm áp
+  "vi": "vi-VN-HoaiMyNeural", // Default Vietnamese
+  "en-US": "en-US-JennyNeural", // Female US - rất tự nhiên
+  "en-UK": "en-GB-SoniaNeural", // Female UK - RP accent
+  "en": "en-US-JennyNeural", // Default English
 };
 
 const GCLOUD_VOICE_MAP: Record<string, string> = {
-  "vi-HN": "vi-VN-Wavenet-C",
-  "vi-HCM": "vi-VN-Wavenet-A",
+  "vi-HN": "vi-VN-Wavenet-C", // Female Northern - Wavenet chất lượng cao
+  "vi-HCM": "vi-VN-Wavenet-A", // Female Southern - Wavenet
   "vi": "vi-VN-Wavenet-C",
   "en-US": "en-US-Wavenet-F",
   "en-UK": "en-GB-Wavenet-B",
   "en": "en-US-Wavenet-F",
 };
 
-// ===== CẢI TIẾN: Edge TTS với SSML =====
+// CẢI TIẾN: Edge TTS với retry thông minh
+async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string): Promise<string> {
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await withTimeout(callEdgeTTSForChunk(chunk, voice, rate), 8000);
+    } catch (err: any) {
+      lastError = err;
+      const waitTime = attempt * 300;
+      console.warn(`[TTS - Edge] Attempt ${attempt}/${maxRetries} failed. Retrying in ${waitTime}ms... Error: ${err.message || err}`);
+      await new Promise(r => setTimeout(r, waitTime));
+    }
+  }
+  throw lastError || new Error("Edge TTS failed after all retries");
+}
+
 async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): Promise<string> {
   const edgeVoice = EDGE_VOICE_MAP[voice] || EDGE_VOICE_MAP["vi"] || "en-US-JennyNeural";
 
-  // Tạo SSML để giọng tự nhiên hơn
-  const ssmlText = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN">
-    <voice name="${edgeVoice}">
-      <prosody rate="${rate}" pitch="+0%">
-        ${chunk}
-      </prosody>
-    </voice>
-  </speak>`;
-
   try {
-    const audioBuffer = await runEdgeTTS(ssmlText, {
+    const audioBuffer = await runEdgeTTS(chunk, {
       voice: edgeVoice,
       rate: rate,
       pitch: "0%"
@@ -663,37 +675,11 @@ async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): 
     }
     throw new Error("Edge TTS returned empty response.");
   } catch (err: any) {
-    console.warn("[TTS - Edge] SSML failed, using plain text:", err.message);
-    const audioBuffer = await runEdgeTTS(chunk, {
-      voice: edgeVoice,
-      rate: rate,
-      pitch: "0%"
-    });
-    if (audioBuffer && audioBuffer.length > 0) {
-      return audioBuffer.toString("base64");
-    }
     throw new Error(`Edge TTS API error: ${err.message || err}`);
   }
 }
 
-async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string): Promise<string> {
-  const maxRetries = 3;
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await withTimeout(callEdgeTTSForChunk(chunk, voice, rate), 10000);
-    } catch (err: any) {
-      lastError = err;
-      const waitTime = attempt * 300;
-      console.warn(`[TTS - Edge] Attempt ${attempt}/${maxRetries} failed. Retrying in ${waitTime}ms...`);
-      await new Promise(r => setTimeout(r, waitTime));
-    }
-  }
-  throw lastError || new Error("Edge TTS failed after all retries");
-}
-
-// ===== CẢI TIẾN: Google Cloud TTS với parameters tối ưu =====
+// CẢI TIẾN: Google Cloud TTS với voice mapping và speaking rate tối ưu
 async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: string): Promise<string> {
   const client = getGCloudTTSClient();
   if (!client) {
@@ -703,27 +689,10 @@ async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: st
   const gcloudVoiceName = GCLOUD_VOICE_MAP[voice] || GCLOUD_VOICE_MAP["vi"] || "vi-VN-Wavenet-C";
   const gcloudLanguageCode = voice?.startsWith("vi") ? "vi-VN" : (voice?.startsWith("en-UK") ? "en-GB" : "en-US");
 
-  let speakingRate = 0.9;
-  let pitch = 0.5;
-  let volumeGainDb = 2;
-
-  if (tone === "conversational") {
-    speakingRate = 0.95;
-    pitch = 0.5;
-    volumeGainDb = 2;
-  } else if (tone === "professional") {
-    speakingRate = 0.85;
-    pitch = 0.0;
-    volumeGainDb = 0;
-  } else if (tone === "fast") {
-    speakingRate = 1.1;
-    pitch = 1.0;
-    volumeGainDb = 0;
-  } else if (tone === "slow") {
-    speakingRate = 0.75;
-    pitch = -0.5;
-    volumeGainDb = 3;
-  }
+  let speakingRate = 0.95; // Mặc định chậm hơn 5% cho rõ tiếng
+  if (tone === "fast") speakingRate = 1.1;
+  else if (tone === "conversational") speakingRate = 1.0;
+  else if (tone === "slow") speakingRate = 0.85;
 
   try {
     const [response] = await withTimeout(
@@ -736,11 +705,11 @@ async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: st
         audioConfig: { 
           audioEncoding: "MP3", 
           speakingRate: speakingRate,
-          pitch: pitch,
-          volumeGainDb: volumeGainDb
+          pitch: 0.0,
+          volumeGainDb: 0
         },
       }),
-      10000
+      10000 // 10s timeout
     );
 
     const audioContent = response.audioContent;
@@ -754,11 +723,12 @@ async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: st
   }
 }
 
-// ===== CẢI TIẾN: Gemini TTS =====
+// CẢI TIẾN: Gemini TTS với timeout hợp lý
 async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string): Promise<string> {
   let voiceName = "Kore";
   let accentInstruction = "";
 
+  // Cập nhật voice mapping cho Gemini
   if (voice === "vi-HN" || voice === "vi") {
     voiceName = "Kore";
     accentInstruction = "ROLE & STYLE: You are a premium, highly professional female radio broadcaster speaking with a clear, prestigious, standard Northern Vietnamese (Hà Nội) accent. Speak with absolute clarity, deep warmth, and professional newsroom cadence. Every word must be beautifully articulated with perfect Northern pronunciation. PACING & EMOTION: Speak naturally, pacing your speed like an elite newscaster. Use natural pauses at commas and periods to create breathing space. Avoid any flat, robotic, or mechanical text-to-speech cadence. Infuse elegant vocal modulation, subtle rising and falling intonations to maintain engagement, and deliver with professional studio quality.";
@@ -800,14 +770,16 @@ async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string)
   return base64Audio;
 }
 
-// ===== CẢI TIẾN: Google Translate TTS =====
+// Google Translate TTS fallback (cải tiến với chunk nhỏ hơn)
 async function callGoogleTranslateTTSForChunk(chunk: string, voice: string): Promise<string> {
   try {
+    // Tách nhỏ hơn cho Translate TTS (max 180 chars)
     const maxLen = 180;
     const internalChunks: string[] = [];
     let start = 0;
     while (start < chunk.length) {
       let end = Math.min(start + maxLen, chunk.length);
+      // Cắt tại dấu cách nếu có thể
       if (end < chunk.length) {
         const lastSpace = chunk.lastIndexOf(' ', end);
         if (lastSpace > start) {
@@ -846,7 +818,7 @@ async function callGoogleTranslateTTSForChunk(chunk: string, voice: string): Pro
   }
 }
 
-// ===== CẢI TIẾN: TTS endpoint với fallback logic =====
+// CẢI TIẾN: TTS endpoint với fallback logic thông minh
 app.post("/api/tts", async (req, res): Promise<any> => {
   const { text, voice, tone } = req.body;
   const isVi = voice?.startsWith("vi") || false;
@@ -856,16 +828,21 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       return res.status(400).json({ error: "No text provided for audio synthesis." });
     }
 
-    const chunks = chunkTextForTTS(text, 350);
-    console.log(`[TTS] Split input text into ${chunks.length} optimized chunks.`);
+    // Split text thành chunks tối ưu
+    const chunks = chunkTextForTTS(text, 250);
+    console.log(`[TTS] Split input text into ${chunks.length} optimized chunks for processing.`);
 
     const now = Date.now();
     
+    // Xác định engine ưu tiên dựa trên ngôn ngữ và trạng thái
     let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
     
     if (isVi) {
+      // TIẾNG VIỆT: Ưu tiên Edge TTS (chất lượng tốt nhất)
       if (now < globalEdgeTtsDisabledUntil) {
+        // Edge đang bị disable, thử Google Cloud
         if (now < globalGCloudTtsDisabledUntil) {
+          // Cả 2 đều disable, dùng Translate (miễn phí nhưng chất lượng kém)
           activeEngine = "translate";
         } else {
           activeEngine = "gcloud";
@@ -874,6 +851,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         activeEngine = "edge";
       }
     } else {
+      // TIẾNG ANH: Ưu tiên Gemini TTS (chất lượng cao nhất)
       if (now < globalGeminiTtsDisabledUntil) {
         if (now < globalGCloudTtsDisabledUntil) {
           if (now < globalEdgeTtsDisabledUntil) {
@@ -896,11 +874,12 @@ app.post("/api/tts", async (req, res): Promise<any> => {
 
     while (!success && attemptsCount < MAX_ATTEMPTS) {
       attemptsCount++;
-      console.log(`[TTS] Attempt ${attemptsCount}/${MAX_ATTEMPTS}: Processing with engine "${activeEngine}"`);
+      console.log(`[TTS] Attempt ${attemptsCount}/${MAX_ATTEMPTS}: Processing all ${chunks.length} segments with engine "${activeEngine}"`);
 
       try {
         finalAudioBuffers = [];
         
+        // Xác định tốc độ đọc cho engine
         const rateMap: Record<string, string> = {
           "fast": "+15%",
           "conversational": "0%",
@@ -927,8 +906,10 @@ app.post("/api/tts", async (req, res): Promise<any> => {
               base64Audio = await callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN");
             }
           } catch (chunkErr: any) {
-            console.warn(`[TTS] Chunk ${index + 1}/${chunks.length} failed. Trying fallback...`);
+            // Nếu chunk fail, thử fallback ngay lập tức cho chunk này
+            console.warn(`[TTS] Chunk ${index + 1}/${chunks.length} failed with ${activeEngine}. Trying fallback...`);
             
+            // Thử các engine khác cho chunk này
             const fallbackEngines = isVi 
               ? ["gcloud", "translate"] 
               : ["gcloud", "edge", "translate"];
@@ -945,10 +926,10 @@ app.post("/api/tts", async (req, res): Promise<any> => {
                   base64Audio = await callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN");
                 }
                 fallbackSuccess = true;
-                console.log(`[TTS] Chunk ${index + 1} succeeded with fallback "${fallbackEngine}"`);
+                console.log(`[TTS] Chunk ${index + 1} succeeded with fallback engine "${fallbackEngine}"`);
                 break;
               } catch (fbErr) {
-                console.warn(`[TTS] Fallback "${fallbackEngine}" failed for chunk ${index + 1}`);
+                console.warn(`[TTS] Fallback engine "${fallbackEngine}" also failed for chunk ${index + 1}`);
               }
             }
             
@@ -966,24 +947,27 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         success = true;
         lastSuccessfulEngine = activeEngine;
         
+        // Reset disabled flags nếu engine hoạt động tốt
         if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
         else if (activeEngine === "gcloud") globalGCloudTtsDisabledUntil = 0;
         else if (activeEngine === "gemini") globalGeminiTtsDisabledUntil = 0;
         
-        console.log(`[TTS] Successfully processed all ${chunks.length} segments using "${activeEngine}"`);
+        console.log(`[TTS] Successfully processed all ${chunks.length} segments using engine "${activeEngine}"`);
         
       } catch (err: any) {
         const errMsg = err.message || String(err);
-        console.warn(`[TTS] Engine "${activeEngine}" failed: ${errMsg}`);
+        console.warn(`[TTS] Engine "${activeEngine}" failed during request: ${errMsg}`);
         
+        // Fallback logic
         if (isVi) {
           if (activeEngine === "edge") {
-            globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
+            globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000; // 3 phút
             activeEngine = "gcloud";
           } else if (activeEngine === "gcloud") {
             globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
             activeEngine = "translate";
           } else {
+            // Translate là fallback cuối cùng, nếu fail thì throw
             if (attemptsCount >= MAX_ATTEMPTS) {
               throw new Error(`All Vietnamese voice engines failed after ${MAX_ATTEMPTS} attempts. Last error: ${errMsg}`);
             }
@@ -1011,6 +995,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       throw new Error("Could not synthesize audio with any available engine.");
     }
 
+    // Nối tất cả audio buffers
     const mergedBuffer = Buffer.concat(finalAudioBuffers);
     console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${activeEngine}).`);
 
@@ -1098,17 +1083,17 @@ Determine if the user is asking for information (a query/question) or just makin
 
 CRITICAL LANGUAGE REQUIREMENT:
 You MUST output your response in the EXACT same language as the user's spoken input.
-- If the user speaks/asks in Vietnamese, your complete answer MUST be in high-quality, fluent, natural Vietnamese.
+- If the user speaks/asks in Vietnamese (or if the input contains Vietnamese characters, diacritics, or looks like Vietnamese), your complete answer MUST be in high-quality, fluent, natural Vietnamese (Tiếng Việt standard). Under NO circumstances should you return an English or Chinese (Chữ Hán, "是在", etc.) answer or mix random foreign words for a Vietnamese query! This is extremely important to the user.
 - If the user speaks/asks in English, write the answer in English.
-- Avoid introducing any raw foreign/machine-translated phrases. Ensure 100% human-like phrasing.
+- Avoid introducing any raw foreign/machine-translated phrases. Ensure 100% human-like phrasing. Do NOT use literal translations, Chinese helper verbs, or transliterated characters.
 
-If it is a query/question, use Google Search grounding results to provide an engaging, clear, concise, and highly accurate answer. Keep the answer brief and natural to read out loud (max 3-4 sentences).
-If it is not a query/question, indicate it is not a query (isQuery: false) and give a simple friendly closing/greeting reply.
+If it is a query/question (e.g., asking about weather, tech, news, details about anything, or requesting a summary/explanation of some topics), use Google Search grounding results to provide an engaging, clear, concise, and highly accurate answer. Keep the answer brief and natural to read out loud (max 3-4 sentences), written in high-quality spoken phrasing.
+If it is not a query/question (e.g., a greeting, a simple statement, empty or random words), indicate it is not a query (isQuery: false) and give a simple friendly closing/greeting reply in the same language.
 
 Your response must be a JSON object with the following structure:
 {
-  "isQuery": boolean,
-  "answer": string
+  "isQuery": boolean, // true if user asks a question or requests info
+  "answer": string    // accurate concise answer derived from search results, or friendly statement response
 }
 `;
 
@@ -1356,7 +1341,7 @@ async function generateArticlesWithAI(url: string, feedTitle: string): Promise<a
     
     const prompt = `Bạn là một biên tập viên tin tức phát thanh chuyên nghiệp.
 Hãy viết danh sách 10 tin tức mới nhất, thời sự và nóng hổi nhất hiện nay phù hợp với nguồn tin "${feedTitle}" (URL: ${url}).
-Các tin tức cần mang tính thời sự cao, nghiêm túc, chính thống.
+Các tin tức cần mang tính thời sự cao, nghiêm túc, chính thống (ví dụ: các chính sách mới về giáo dục nếu là báo giáo dục, tin thời sự quốc tế/trong nước nổi bật nếu là báo lớn).
 
 Yêu cầu định dạng đầu ra là một chuỗi JSON hợp lệ (và duy nhất, không kèm giải thích hay markdown code blocks), là một mảng các đối tượng có cấu trúc sau:
 [
@@ -1416,7 +1401,7 @@ Yêu cầu định dạng đầu ra là một chuỗi JSON hợp lệ (và duy n
   ];
 }
 
-const CACHE_DURATION_MS = 5 * 60 * 1000;
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
 app.get("/api/parse-rss", async (req, res): Promise<any> => {
   const { url, forceRefresh } = req.query;
