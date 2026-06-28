@@ -123,9 +123,6 @@ export default function ManualPcmPlayer({
   const [currentPlayingIndex, setCurrentPlayingIndex] = useState(0);
   const segmentRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // ===== THÊM STATE NÀY =====
-  const [isHighQualityVoice, setIsHighQualityVoice] = useState(true);
-
   useEffect(() => {
     setCurrentPlayingIndex(activeSegmentIndex);
   }, [activeSegmentIndex]);
@@ -150,6 +147,7 @@ export default function ManualPcmPlayer({
   const bgGainRef = useRef<GainNode | null>(null);
 
   const [volume, setVolume] = useState<number>(0.9);
+  const [isHighQualityVoice, setIsHighQualityVoice] = useState(true);
   const [frequencyData, setFrequencyData] = useState<number[]>(new Array(32).fill(12));
   const [copied, setCopied] = useState(false);
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
@@ -259,8 +257,7 @@ export default function ManualPcmPlayer({
 
         const sampleRate = decodedBuffers[0].sampleRate;
         const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-        // ===== SỬA: Giảm pause từ 0.6s xuống 0.25s =====
-        const pauseSamples = Math.round(sampleRate * 0.25);
+        const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s pause
         
         let totalSamples = 0;
         const offsets: { start: number; end: number }[] = [];
@@ -280,6 +277,7 @@ export default function ManualPcmPlayer({
         if (!active) return;
         setSegmentOffsets(offsets);
         
+        // ===== FIX: Tính total duration chính xác =====
         const calculatedDuration = totalSamples / sampleRate;
         setTotalDuration(calculatedDuration);
         console.log(`[ManualPcmPlayer] Total duration: ${calculatedDuration.toFixed(2)}s, Samples: ${totalSamples}, Rate: ${sampleRate}Hz`);
@@ -317,6 +315,7 @@ export default function ManualPcmPlayer({
     };
   }, [audioChunks]);
 
+  // ===== FIX: Cải thiện playAudio với timing chính xác =====
   const playAudio = (offset: number) => {
     if (!mainBufferRef.current || !audioCtxRef.current) return;
 
@@ -330,6 +329,7 @@ export default function ManualPcmPlayer({
     const source = audioCtx.createBufferSource();
     source.buffer = mainBufferRef.current;
     
+    // ===== FIX: Giới hạn rate để tránh biến dạng giọng quá nhiều =====
     const safeRate = Math.max(0.6, Math.min(2.5, playbackRate));
     source.playbackRate.value = safeRate;
     
@@ -348,6 +348,7 @@ export default function ManualPcmPlayer({
 
     const safeOffset = Math.max(0, Math.min(offset, totalDuration));
     
+    // ===== FIX: Lưu timing chính xác =====
     const startTime = audioCtx.currentTime;
     source.start(0, safeOffset);
     sourceNodeRef.current = source;
@@ -357,14 +358,17 @@ export default function ManualPcmPlayer({
     setIsPlaying(true);
   };
 
+  // ===== FIX: Cập nhật timing khi thay đổi playback rate =====
   useEffect(() => {
     if (sourceNodeRef.current && isPlaying) {
+      // Lưu vị trí hiện tại và restart với rate mới
       const currentOffset = currentTime;
       stopAudio();
       playAudio(currentOffset);
     }
   }, [playbackRate]);
 
+  // ===== FIX: Theo dõi progress với timing chính xác =====
   const startTrackingProgress = () => {
     if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
 
@@ -373,8 +377,10 @@ export default function ManualPcmPlayer({
 
       const now = audioCtxRef.current.currentTime;
       
+      // ===== FIX: Tính elapsed với rate hiện tại =====
       let elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * playbackRate;
       
+      // Giới hạn trong khoảng hợp lệ
       elapsedSeconds = Math.max(0, Math.min(elapsedSeconds, totalDuration));
 
       if (elapsedSeconds >= totalDuration - 0.05) {
@@ -389,6 +395,7 @@ export default function ManualPcmPlayer({
 
       setCurrentTime(elapsedSeconds);
 
+      // Tìm segment active
       const activeIdx = segmentOffsets.findIndex(
         (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
       );
@@ -565,7 +572,9 @@ export default function ManualPcmPlayer({
     return () => clearInterval(interval);
   }, [isPlaying]);
 
+  // ===== FIX: Xử lý rate change với giới hạn =====
   const handleRateChange = (rate: number) => {
+    // Giới hạn rate để tránh biến dạng giọng quá nhiều
     if (rate < 0.6) {
       alert(uiLanguage === "vi" 
         ? "Tốc độ quá chậm có thể làm biến dạng giọng. Khuyến nghị từ 0.75x đến 2.0x." 
@@ -984,7 +993,7 @@ export default function ManualPcmPlayer({
           </button>
         </div>
 
-        {/* Voice Quality Toggle */}
+        {/* ===== FIX: Voice Quality Toggle ===== */}
         <div className="relative z-10 mt-4 flex justify-between items-center border-t border-slate-800/80 pt-3">
           <div className="flex items-center gap-3">
             <span className="text-[10px] text-slate-500 font-mono uppercase">Giọng phát thanh</span>
