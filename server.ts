@@ -2514,13 +2514,11 @@ app.get("/api/supabase-config", (req, res) => {
 });
 
 // ==================== SERVE FRONTEND ====================
+// ==================== SERVE FRONTEND ====================
 async function serveApp() {
   const distPath = path.join(process.cwd(), "dist");
   const hasDist = fs.existsSync(distPath);
-  // ===== THÊM LOG NÀY =====
-  console.log(`[ServeApp] NODE_ENV: ${process.env.NODE_ENV}`);
-  console.log(`[ServeApp] distPath: ${distPath}, exists: ${hasDist}`);
-  
+
   if (process.env.NODE_ENV !== "production" || !hasDist) {
     console.log("[CommuteCast Backend] Starting Vite in middleware mode...");
     const vite = await createViteServer({
@@ -2530,8 +2528,31 @@ async function serveApp() {
     app.use(vite.middlewares);
   } else {
     console.log("[CommuteCast Backend] Serving static files from dist...");
-    app.use(express.static(distPath));
+    
+    // ===== CẤU HÌNH CACHE CHO FILE TĨNH =====
+    // 1. File JS/CSS/Assets: cache lâu dài (1 năm)
+    app.use(
+      express.static(distPath, {
+        maxAge: "1y",
+        setHeaders: (res, filePath) => {
+          // Nếu là index.html, không cache
+          if (filePath.endsWith("index.html")) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+          } else {
+            // Các file khác (JS, CSS, ảnh) cache 1 năm
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        },
+      })
+    );
+
+    // 2. Route fallback: trả về index.html với header no-cache
     app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
