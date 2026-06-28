@@ -719,12 +719,17 @@ async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string):
 }
 
 async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): Promise<string> {
-  const edgeVoice = EDGE_VOICE_MAP[voice] || EDGE_VOICE_MAP["vi"] || "en-US-JennyNeural";
+  const edgeVoice = EDGE_VOICE_MAP[voice] || EDGE_VOICE_MAP["en"] || "en-US-JennyNeural";
+  // Thêm pitch cho tiếng Anh (tăng 5% để giọng sáng hơn, tự nhiên hơn)
+  let pitch = "0%";
+  if (voice === "en-US" || voice === "en-UK" || voice === "en") {
+    pitch = "+5%"; // hoặc "+10%" nếu muốn sáng hơn
+  }
   try {
     const audioBuffer = await runEdgeTTS(chunk, {
       voice: edgeVoice,
       rate: rate,
-      pitch: "0%"
+      pitch: pitch
     });
     if (audioBuffer && audioBuffer.length > 0) {
       return audioBuffer.toString("base64");
