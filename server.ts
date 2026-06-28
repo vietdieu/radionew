@@ -922,10 +922,10 @@ app.post("/api/tts", async (req, res): Promise<any> => {
             activeEngine = "gcloud";
           }
         } else {
-          activeEngine = "edge";
+          activeEngine = "gemini";
         }
       } else {
-        activeEngine = "gemini";
+        activeEngine = "edge";
       }
     }
     console.log(`[TTS-DEBUG] Selected initial engine: ${activeEngine}`);
