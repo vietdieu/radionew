@@ -4,7 +4,7 @@ const DB_NAME = "CommuteCastDB";
 const STORE_NAME = "briefings_store";
 const VOICE_HISTORY_STORE = "voiceHistory";
 const RSS_FEEDS_STORE = "rssFeeds";
-const DB_VERSION = 7; // Tăng version lên 7 để đảm bảo onupgradeneeded luôn chạy trên tất cả trình duyệt người dùng, giải quyết dứt điểm chỉ mục url_idx
+const DB_VERSION = 8; // Tăng version lên 8 để đảm bảo onupgradeneeded luôn chạy trên tất cả trình duyệt người dùng, giải quyết dứt điểm chỉ mục url_idx
 const MAX_BRIEFINGS_LIMIT = 50; // Tự động xóa bớt khi vượt quá
 const LOCAL_STORAGE_FALLBACK_KEY_VI = "commute_cast_history_vi";
 const LOCAL_STORAGE_FALLBACK_KEY_EN = "commute_cast_history_en";
@@ -670,4 +670,77 @@ export async function incrementBriefingShares(id: string): Promise<number> {
     console.warn("Failed to increment shareCount", err);
     return 0;
   }
+}
+
+// ================== SYNC QUEUE ==================
+export interface SyncQueueItem {
+  id: string;
+  type: string;
+  data: any;
+  timestamp: number;
+}
+
+export async function saveSyncQueue(queue: SyncQueueItem[]): Promise<void> {
+  if (!isIndexedDBSupported()) {
+    // Fallback: lưu vào localStorage (nhưng chúng ta đang muốn tránh điều này)
+    // Có thể throw error hoặc vẫn lưu để tương thích ngược, nhưng khuyến khích dùng IndexedDB
+    try {
+      localStorage.setItem('commutecast_sync_queue', JSON.stringify(queue));
+    } catch (e) {
+      console.error('Failed to save sync queue to localStorage fallback', e);
+      throw new Error('STORAGE_QUOTA_EXCEEDED');
+    }
+    return;
+  }
+
+  const db = await openDB();
+  const tx = db.transaction(SYNC_QUEUE_STORE, 'readwrite');
+  const store = tx.objectStore(SYNC_QUEUE_STORE);
+  // Xóa toàn bộ cũ và thêm mới
+  store.clear();
+  queue.forEach(item => store.add(item));
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+export async function loadSyncQueue(): Promise<SyncQueueItem[]> {
+  if (!isIndexedDBSupported()) {
+    try {
+      const data = localStorage.getItem('commutecast_sync_queue');
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  const db = await openDB();
+  const tx = db.transaction(SYNC_QUEUE_STORE, 'readonly');
+  const store = tx.objectStore(SYNC_QUEUE_STORE);
+  const result = await new Promise<SyncQueueItem[]>((resolve, reject) => {
+    const request = store.getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return result;
+}
+
+export async function clearSyncQueue(): Promise<void> {
+  if (!isIndexedDBSupported()) {
+    localStorage.removeItem('commutecast_sync_queue');
+    return;
+  }
+
+  const db = await openDB();
+  const tx = db.transaction(SYNC_QUEUE_STORE, 'readwrite');
+  const store = tx.objectStore(SYNC_QUEUE_STORE);
+  store.clear();
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
 }
