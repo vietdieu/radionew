@@ -828,23 +828,17 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       return res.status(400).json({ error: "No text provided for audio synthesis." });
     }
 
-    // ===== LOG 1: Thông tin đầu vào =====
     console.log(`[TTS] Received text length: ${text.length} characters.`);
     console.log(`[TTS] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
     console.log(`[TTS] Is Vietnamese: ${isVi}`);
 
-    // Split text thành chunks tối ưu
     const chunks = chunkTextForTTS(text, 250);
     console.log(`[TTS] Split input text into ${chunks.length} optimized chunks for processing.`);
-
-    // ===== LOG 2: Độ dài từng chunk =====
     chunks.forEach((chunk, i) => {
       console.log(`[TTS] Chunk ${i+1} length: ${chunk.length} chars.`);
     });
 
     const now = Date.now();
-    
-    // Xác định engine ưu tiên dựa trên ngôn ngữ và trạng thái
     let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
     
     if (isVi) {
@@ -874,10 +868,21 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     }
     console.log(`[TTS] Selected initial engine: ${activeEngine}`);
 
+    // Khai báo rateMap ở đây để dùng cho log cuối
+    const rateMap: Record<string, string> = {
+      "fast": "+15%",
+      "conversational": "0%",
+      "slow": "-15%",
+      "professional": "0%",
+    };
+    const rate = rateMap[tone || "conversational"] || "0%";
+    const usedTone = tone || "conversational";
+
     let success = false;
     let finalAudioBuffers: Buffer[] = [];
     let attemptsCount = 0;
     const MAX_ATTEMPTS = 5;
+    let usedEngineForFinal = activeEngine;
 
     while (!success && attemptsCount < MAX_ATTEMPTS) {
       attemptsCount++;
@@ -886,14 +891,6 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       try {
         finalAudioBuffers = [];
         
-        const rateMap: Record<string, string> = {
-          "fast": "+15%",
-          "conversational": "0%",
-          "slow": "-15%",
-          "professional": "0%",
-        };
-        const rate = rateMap[tone || "conversational"] || "0%";
-
         for (let index = 0; index < chunks.length; index++) {
           const chunk = chunks[index];
           let base64Audio = "";
@@ -949,6 +946,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         }
         
         success = true;
+        usedEngineForFinal = activeEngine;
         lastSuccessfulEngine = activeEngine;
         
         if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
@@ -997,25 +995,22 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     }
 
     const mergedBuffer = Buffer.concat(finalAudioBuffers);
-    console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${activeEngine}).`);
-    
-    // ===== LOG 3: Ước tính thời lượng =====
-    const estimatedDuration = (mergedBuffer.length / (24000 * 2)).toFixed(2); // PCM 16-bit, mono, 24kHz
+    console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${usedEngineForFinal}).`);
+    const estimatedDuration = (mergedBuffer.length / (24000 * 2)).toFixed(2);
     console.log(`[TTS] Estimated duration: ${estimatedDuration}s (based on PCM mono 16-bit 24kHz).`);
 
-    // ===== LOG 4: Tổng kết =====
     console.log(`[TTS] === SUMMARY ===`);
     console.log(`[TTS] - Total text length: ${text.length} chars`);
     console.log(`[TTS] - Chunks count: ${chunks.length}`);
-    console.log(`[TTS] - Engine used: ${activeEngine}`);
-    console.log(`[TTS] - Tone used: ${tone || 'conversational'} (rate: ${rateMap[tone || 'conversational'] || '0%'})`);
+    console.log(`[TTS] - Engine used: ${usedEngineForFinal}`);
+    console.log(`[TTS] - Tone used: ${usedTone} (rate: ${rate})`);
     console.log(`[TTS] - Merged audio size: ${mergedBuffer.length} bytes`);
     console.log(`[TTS] - Estimated duration: ${estimatedDuration}s`);
     console.log(`[TTS] ==================`);
 
     return res.json({ 
       base64Audio: mergedBuffer.toString("base64"),
-      engine: activeEngine,
+      engine: usedEngineForFinal,
       chunksCount: chunks.length
     });
 
