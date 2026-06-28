@@ -5,7 +5,10 @@ import {
   deleteBriefing, 
   getVoiceHistory, 
   saveVoiceHistory, 
-  clearVoiceHistory 
+  clearVoiceHistory,
+  loadSyncQueue,        // Thêm
+  saveSyncQueue as saveSyncQueueToDB,  // Thêm
+  clearSyncQueue as clearSyncQueueFromDB // Thêm
 } from "./storageService";
 import { SavedSummary, VoiceHistoryItem } from "../types";
 import { UserPreferences } from "../components/UserPreferencesProvider";
@@ -19,56 +22,59 @@ export interface SyncQueueItem {
   timestamp: number;
 }
 
-const SYNC_QUEUE_KEY = "commutecast_sync_queue";
+// Không cần key cũ
+// const SYNC_QUEUE_KEY = "commutecast_sync_queue";
 
 // ================== OFFLINE QUEUE MANAGEMENT ==================
 
-export function getSyncQueue(): SyncQueueItem[] {
+export async function getSyncQueue(): Promise<SyncQueueItem[]> {
   try {
-    const queueStr = localStorage.getItem(SYNC_QUEUE_KEY);
-    return queueStr ? JSON.parse(queueStr) : [];
+    return await loadSyncQueue();
   } catch (err) {
     console.error("[Sync] Failed to read sync queue:", err);
     return [];
   }
 }
 
-export function saveSyncQueue(queue: SyncQueueItem[]): void {
+export async function saveSyncQueue(queue: SyncQueueItem[]): Promise<void> {
   try {
-    localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(queue));
+    await saveSyncQueueToDB(queue);
   } catch (err) {
     console.error("[Sync] Failed to save sync queue:", err);
   }
 }
 
-export function addToSyncQueue(item: Omit<SyncQueueItem, "id" | "timestamp">): void {
-  const queue = getSyncQueue();
+export async function addToSyncQueue(item: Omit<SyncQueueItem, "id" | "timestamp">): Promise<void> {
+  const queue = await getSyncQueue();
   const newItem: SyncQueueItem = {
     ...item,
     id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now()
   };
 
-  // If there's an existing save/delete for the same item, optimize the queue
+  // Optimize queue: remove redundant pending saves if delete follows
   let filtered = queue;
   if (item.targetId) {
-    // If we delete an item, we can remove any pending saves for it
     if (item.action === "delete") {
       filtered = queue.filter(q => !(q.targetId === item.targetId && q.action === "save"));
-    }
-    // If we save an item, we can replace any existing pending saves for it
-    else if (item.action === "save") {
+    } else if (item.action === "save") {
       filtered = queue.filter(q => !(q.targetId === item.targetId && q.action === "save"));
     }
   }
 
   filtered.push(newItem);
-  saveSyncQueue(filtered);
+  await saveSyncQueue(filtered);
   console.log(`[Sync Queue] Added item: ${item.type} (${item.action})`);
 }
 
-export function clearSyncQueue(): void {
-  localStorage.removeItem(SYNC_QUEUE_KEY);
+export async function clearSyncQueue(): Promise<void> {
+  await clearSyncQueueFromDB();
+  // Xóa key localStorage cũ để giải phóng bộ nhớ
+  try {
+    localStorage.removeItem('commutecast_sync_queue');
+  } catch (e) {
+    // ignore
+  }
 }
 
 // ================== SYNC UTILITIES ==================
@@ -107,7 +113,7 @@ export async function processSyncQueueAsync(): Promise<boolean> {
   if (!session || !session.user) return false;
 
   const userId = session.user.id;
-  const queue = getSyncQueue();
+  const queue = await getSyncQueue(); // await
   if (queue.length === 0) return true;
 
   console.log(`[Sync Queue] Processing ${queue.length} items from offline queue...`);
@@ -183,7 +189,7 @@ export async function processSyncQueueAsync(): Promise<boolean> {
     }
   }
 
-  saveSyncQueue(failedItems);
+  await saveSyncQueue(failedItems);
   return failedItems.length === 0;
 }
 
@@ -428,14 +434,14 @@ export async function syncSaveBriefingAsync(briefing: SavedSummary): Promise<voi
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
+    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
     // Save to queue for when they log in
-    addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
+    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
     return;
   }
 
@@ -455,7 +461,7 @@ export async function syncSaveBriefingAsync(briefing: SavedSummary): Promise<voi
     console.log(`[Sync] Uploaded briefing ${briefing.id} directly to cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to upload briefing ${briefing.id} directly. Queuing...`, err);
-    addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
+    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
   }
 }
 
@@ -465,13 +471,13 @@ export async function syncDeleteBriefingAsync(id: string): Promise<void> {
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
+    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
+    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
     return;
   }
 
@@ -485,7 +491,7 @@ export async function syncDeleteBriefingAsync(id: string): Promise<void> {
     console.log(`[Sync] Deleted briefing ${id} directly from cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to delete briefing ${id} directly. Queuing...`, err);
-    addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
+    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
   }
 }
 
@@ -495,13 +501,13 @@ export async function syncSavePreferencesAsync(preferences: UserPreferences): Pr
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "preferences", action: "save", data: preferences });
+    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "preferences", action: "save", data: preferences });
+    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
     return;
   }
 
@@ -515,7 +521,7 @@ export async function syncSavePreferencesAsync(preferences: UserPreferences): Pr
     console.log(`[Sync] Uploaded user preferences to cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to upload preferences. Queuing...`, err);
-    addToSyncQueue({ type: "preferences", action: "save", data: preferences });
+    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
   }
 }
 
@@ -525,13 +531,13 @@ export async function syncSaveVoiceHistoryAsync(item: Partial<VoiceHistoryItem>)
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
+    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
     return saved;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
+    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
     return saved;
   }
 
@@ -550,7 +556,7 @@ export async function syncSaveVoiceHistoryAsync(item: Partial<VoiceHistoryItem>)
     console.log(`[Sync] Uploaded voice history item ${saved.id} directly to cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to upload voice item. Queuing...`, err);
-    addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
+    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
   }
 
   return saved;
@@ -562,13 +568,13 @@ export async function syncClearVoiceHistoryAsync(): Promise<void> {
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "voice_history", action: "clear" });
+    await addToSyncQueue({ type: "voice_history", action: "clear" });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "voice_history", action: "clear" });
+    await addToSyncQueue({ type: "voice_history", action: "clear" });
     return;
   }
 
@@ -581,6 +587,6 @@ export async function syncClearVoiceHistoryAsync(): Promise<void> {
     console.log(`[Sync] Cleared voice history directly from cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to clear voice history. Queuing...`, err);
-    addToSyncQueue({ type: "voice_history", action: "clear" });
+    await addToSyncQueue({ type: "voice_history", action: "clear" });
   }
 }
