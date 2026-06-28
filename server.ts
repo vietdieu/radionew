@@ -707,7 +707,7 @@ const GCLOUD_VOICE_MAP: Record<string, string> = {
 
 // CẢI TIẾN: Edge TTS với retry thông minh
 async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string): Promise<string> {
-  const maxRetries = 3;
+  const maxRetries = 1;
   let lastError: Error | null = null;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -960,7 +960,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
               // Giảm timeout Gemini xuống 15s
               base64Audio = await withTimeout(
                 callGeminiTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
-                15000
+                8000
               );
             } else if (activeEngine === "gcloud") {
               // Giảm timeout Google Cloud xuống 8s
