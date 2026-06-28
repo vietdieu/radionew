@@ -828,9 +828,19 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       return res.status(400).json({ error: "No text provided for audio synthesis." });
     }
 
+    // ===== LOG 1: Thông tin đầu vào =====
+    console.log(`[TTS] Received text length: ${text.length} characters.`);
+    console.log(`[TTS] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
+    console.log(`[TTS] Is Vietnamese: ${isVi}`);
+
     // Split text thành chunks tối ưu
     const chunks = chunkTextForTTS(text, 250);
     console.log(`[TTS] Split input text into ${chunks.length} optimized chunks for processing.`);
+
+    // ===== LOG 2: Độ dài từng chunk =====
+    chunks.forEach((chunk, i) => {
+      console.log(`[TTS] Chunk ${i+1} length: ${chunk.length} chars.`);
+    });
 
     const now = Date.now();
     
@@ -838,11 +848,8 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
     
     if (isVi) {
-      // TIẾNG VIỆT: Ưu tiên Edge TTS (chất lượng tốt nhất)
       if (now < globalEdgeTtsDisabledUntil) {
-        // Edge đang bị disable, thử Google Cloud
         if (now < globalGCloudTtsDisabledUntil) {
-          // Cả 2 đều disable, dùng Translate (miễn phí nhưng chất lượng kém)
           activeEngine = "translate";
         } else {
           activeEngine = "gcloud";
@@ -851,7 +858,6 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         activeEngine = "edge";
       }
     } else {
-      // TIẾNG ANH: Ưu tiên Gemini TTS (chất lượng cao nhất)
       if (now < globalGeminiTtsDisabledUntil) {
         if (now < globalGCloudTtsDisabledUntil) {
           if (now < globalEdgeTtsDisabledUntil) {
@@ -866,6 +872,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         activeEngine = "gemini";
       }
     }
+    console.log(`[TTS] Selected initial engine: ${activeEngine}`);
 
     let success = false;
     let finalAudioBuffers: Buffer[] = [];
@@ -879,7 +886,6 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       try {
         finalAudioBuffers = [];
         
-        // Xác định tốc độ đọc cho engine
         const rateMap: Record<string, string> = {
           "fast": "+15%",
           "conversational": "0%",
@@ -906,10 +912,8 @@ app.post("/api/tts", async (req, res): Promise<any> => {
               base64Audio = await callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN");
             }
           } catch (chunkErr: any) {
-            // Nếu chunk fail, thử fallback ngay lập tức cho chunk này
             console.warn(`[TTS] Chunk ${index + 1}/${chunks.length} failed with ${activeEngine}. Trying fallback...`);
             
-            // Thử các engine khác cho chunk này
             const fallbackEngines = isVi 
               ? ["gcloud", "translate"] 
               : ["gcloud", "edge", "translate"];
@@ -947,7 +951,6 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         success = true;
         lastSuccessfulEngine = activeEngine;
         
-        // Reset disabled flags nếu engine hoạt động tốt
         if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
         else if (activeEngine === "gcloud") globalGCloudTtsDisabledUntil = 0;
         else if (activeEngine === "gemini") globalGeminiTtsDisabledUntil = 0;
@@ -958,16 +961,14 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         const errMsg = err.message || String(err);
         console.warn(`[TTS] Engine "${activeEngine}" failed during request: ${errMsg}`);
         
-        // Fallback logic
         if (isVi) {
           if (activeEngine === "edge") {
-            globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000; // 3 phút
+            globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
             activeEngine = "gcloud";
           } else if (activeEngine === "gcloud") {
             globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
             activeEngine = "translate";
           } else {
-            // Translate là fallback cuối cùng, nếu fail thì throw
             if (attemptsCount >= MAX_ATTEMPTS) {
               throw new Error(`All Vietnamese voice engines failed after ${MAX_ATTEMPTS} attempts. Last error: ${errMsg}`);
             }
@@ -995,9 +996,22 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       throw new Error("Could not synthesize audio with any available engine.");
     }
 
-    // Nối tất cả audio buffers
     const mergedBuffer = Buffer.concat(finalAudioBuffers);
     console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${activeEngine}).`);
+    
+    // ===== LOG 3: Ước tính thời lượng =====
+    const estimatedDuration = (mergedBuffer.length / (24000 * 2)).toFixed(2); // PCM 16-bit, mono, 24kHz
+    console.log(`[TTS] Estimated duration: ${estimatedDuration}s (based on PCM mono 16-bit 24kHz).`);
+
+    // ===== LOG 4: Tổng kết =====
+    console.log(`[TTS] === SUMMARY ===`);
+    console.log(`[TTS] - Total text length: ${text.length} chars`);
+    console.log(`[TTS] - Chunks count: ${chunks.length}`);
+    console.log(`[TTS] - Engine used: ${activeEngine}`);
+    console.log(`[TTS] - Tone used: ${tone || 'conversational'} (rate: ${rateMap[tone || 'conversational'] || '0%'})`);
+    console.log(`[TTS] - Merged audio size: ${mergedBuffer.length} bytes`);
+    console.log(`[TTS] - Estimated duration: ${estimatedDuration}s`);
+    console.log(`[TTS] ==================`);
 
     return res.json({ 
       base64Audio: mergedBuffer.toString("base64"),
