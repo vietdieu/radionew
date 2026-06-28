@@ -2517,7 +2517,10 @@ app.get("/api/supabase-config", (req, res) => {
 async function serveApp() {
   const distPath = path.join(process.cwd(), "dist");
   const hasDist = fs.existsSync(distPath);
-
+  // ===== THÊM LOG NÀY =====
+  console.log(`[ServeApp] NODE_ENV: ${process.env.NODE_ENV}`);
+  console.log(`[ServeApp] distPath: ${distPath}, exists: ${hasDist}`);
+  
   if (process.env.NODE_ENV !== "production" || !hasDist) {
     console.log("[CommuteCast Backend] Starting Vite in middleware mode...");
     const vite = await createViteServer({
