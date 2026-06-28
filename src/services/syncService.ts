@@ -6,24 +6,16 @@ import {
   getVoiceHistory, 
   saveVoiceHistory, 
   clearVoiceHistory,
-  loadSyncQueue,        // Thêm
-  saveSyncQueue as saveSyncQueueToDB,  // Thêm
-  clearSyncQueue as clearSyncQueueFromDB // Thêm
+  loadSyncQueue,
+  saveSyncQueue as saveSyncQueueToDB,
+  clearSyncQueue as clearSyncQueueFromDB,
+  SyncQueueItem as StorageSyncQueueItem
 } from "./storageService";
 import { SavedSummary, VoiceHistoryItem } from "../types";
 import { UserPreferences } from "../components/UserPreferencesProvider";
 
-export interface SyncQueueItem {
-  id: string; // unique ID of the queue item
-  type: "briefing" | "preferences" | "voice_history";
-  action: "save" | "delete" | "clear";
-  targetId?: string; // target item ID (e.g., briefing ID)
-  data?: any; // serialized payload
-  timestamp: number;
-}
-
-// Không cần key cũ
-// const SYNC_QUEUE_KEY = "commutecast_sync_queue";
+// Sử dụng lại kiểu từ storageService để đồng bộ
+export type SyncQueueItem = StorageSyncQueueItem;
 
 // ================== OFFLINE QUEUE MANAGEMENT ==================
 
@@ -113,7 +105,7 @@ export async function processSyncQueueAsync(): Promise<boolean> {
   if (!session || !session.user) return false;
 
   const userId = session.user.id;
-  const queue = await getSyncQueue(); // await
+  const queue = await getSyncQueue();
   if (queue.length === 0) return true;
 
   console.log(`[Sync Queue] Processing ${queue.length} items from offline queue...`);
@@ -440,7 +432,6 @@ export async function syncSaveBriefingAsync(briefing: SavedSummary): Promise<voi
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    // Save to queue for when they log in
     await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
     return;
   }
