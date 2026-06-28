@@ -823,22 +823,23 @@ app.post("/api/tts", async (req, res): Promise<any> => {
   const { text, voice, tone } = req.body;
   const isVi = voice?.startsWith("vi") || false;
 
+  // ===== LOG 1: Thông tin đầu vào =====
+  console.log(`[TTS-DEBUG] Text length: ${text?.length || 0}`);
+  console.log(`[TTS-DEBUG] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
+  console.log(`[TTS-DEBUG] Is Vietnamese: ${isVi}`);
+
   try {
     if (!text || text.trim() === "") {
       return res.status(400).json({ error: "No text provided for audio synthesis." });
     }
 
-    console.log(`[TTS] Received text length: ${text.length} characters.`);
-    console.log(`[TTS] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
-    console.log(`[TTS] Is Vietnamese: ${isVi}`);
-
+    // Split text thành chunks tối ưu
     const chunks = chunkTextForTTS(text, 250);
-    console.log(`[TTS] Split input text into ${chunks.length} optimized chunks for processing.`);
-    chunks.forEach((chunk, i) => {
-      console.log(`[TTS] Chunk ${i+1} length: ${chunk.length} chars.`);
-    });
+    console.log(`[TTS-DEBUG] Number of chunks: ${chunks.length}`);
 
     const now = Date.now();
+    
+    // Xác định engine ưu tiên dựa trên ngôn ngữ và trạng thái
     let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
     
     if (isVi) {
@@ -866,9 +867,9 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         activeEngine = "gemini";
       }
     }
-    console.log(`[TTS] Selected initial engine: ${activeEngine}`);
+    console.log(`[TTS-DEBUG] Selected initial engine: ${activeEngine}`);
 
-    // Khai báo rateMap ở đây để dùng cho log cuối
+    // Xác định tốc độ đọc cho engine (đưa ra ngoài vòng lặp để dùng ở log cuối)
     const rateMap: Record<string, string> = {
       "fast": "+15%",
       "conversational": "0%",
@@ -876,13 +877,12 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       "professional": "0%",
     };
     const rate = rateMap[tone || "conversational"] || "0%";
-    const usedTone = tone || "conversational";
 
     let success = false;
     let finalAudioBuffers: Buffer[] = [];
     let attemptsCount = 0;
     const MAX_ATTEMPTS = 5;
-    let usedEngineForFinal = activeEngine;
+    let finalEngine = activeEngine; // để ghi nhận engine cuối cùng
 
     while (!success && attemptsCount < MAX_ATTEMPTS) {
       attemptsCount++;
@@ -946,9 +946,9 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         }
         
         success = true;
-        usedEngineForFinal = activeEngine;
-        lastSuccessfulEngine = activeEngine;
+        finalEngine = activeEngine; // lưu engine thành công
         
+        // Reset disabled flags nếu engine hoạt động tốt
         if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
         else if (activeEngine === "gcloud") globalGCloudTtsDisabledUntil = 0;
         else if (activeEngine === "gemini") globalGeminiTtsDisabledUntil = 0;
@@ -994,23 +994,19 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       throw new Error("Could not synthesize audio with any available engine.");
     }
 
+    // Nối tất cả audio buffers
     const mergedBuffer = Buffer.concat(finalAudioBuffers);
-    console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${usedEngineForFinal}).`);
-    const estimatedDuration = (mergedBuffer.length / (24000 * 2)).toFixed(2);
-    console.log(`[TTS] Estimated duration: ${estimatedDuration}s (based on PCM mono 16-bit 24kHz).`);
+    console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${finalEngine}).`);
 
-    console.log(`[TTS] === SUMMARY ===`);
-    console.log(`[TTS] - Total text length: ${text.length} chars`);
-    console.log(`[TTS] - Chunks count: ${chunks.length}`);
-    console.log(`[TTS] - Engine used: ${usedEngineForFinal}`);
-    console.log(`[TTS] - Tone used: ${usedTone} (rate: ${rate})`);
-    console.log(`[TTS] - Merged audio size: ${mergedBuffer.length} bytes`);
-    console.log(`[TTS] - Estimated duration: ${estimatedDuration}s`);
-    console.log(`[TTS] ==================`);
+    // ===== LOG 2: Thông tin tổng kết =====
+    const estimatedDuration = (mergedBuffer.length / (24000 * 2)).toFixed(2); // PCM 16-bit, mono, 24kHz
+    console.log(`[TTS-DEBUG] Merged size: ${mergedBuffer.length} bytes -> ~${estimatedDuration}s (PCM 16-bit mono)`);
+    console.log(`[TTS-DEBUG] Engine used: ${finalEngine}, Tone: ${tone || 'conversational'}, Rate: ${rate}`);
+    console.log(`[TTS-DEBUG] Text length: ${text.length}, Chunks: ${chunks.length}`);
 
     return res.json({ 
       base64Audio: mergedBuffer.toString("base64"),
-      engine: usedEngineForFinal,
+      engine: finalEngine,
       chunksCount: chunks.length
     });
 
