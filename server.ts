@@ -27,6 +27,8 @@ app.get("/health", (req, res) => {
 });
 
 let currentKeyIndex = 0;
+const keyCooldownMap = new Map<string, number>();
+const COOLDOWN_DURATION = 60 * 1000; // 60 giây
 
 // Global timestamps để temporarily disable failing TTS engines
 let globalGeminiTtsDisabledUntil = 0;
@@ -68,12 +70,21 @@ async function callGeminiWithRotation<T>(
     throw new Error("No GEMINI_API_KEY is configured. Please set at least GEMINI_API_KEY in Settings -> Secrets.");
   }
 
-  let attempts = 0;
   let lastError: any = null;
+  const maxAttempts = keys.length * 2; // Duyệt tối đa 2 vòng
 
-  while (attempts < keys.length) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const keyIndex = currentKeyIndex % keys.length;
     const currentKey = keys[keyIndex];
+    const now = Date.now();
+
+    // Kiểm tra key có đang trong cooldown không?
+    const cooldownExpiry = keyCooldownMap.get(currentKey) || 0;
+    if (now < cooldownExpiry) {
+      console.log(`[Gemini Rotation] Key #${keyIndex + 1} is on cooldown until ${new Date(cooldownExpiry).toISOString()}. Skipping.`);
+      currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+      continue;
+    }
 
     const ai = new GoogleGenAI({
       apiKey: currentKey,
@@ -83,6 +94,8 @@ async function callGeminiWithRotation<T>(
     try {
       console.log(`[Gemini Rotation] Attempting call using Key Index #${keyIndex + 1} of ${keys.length} (ending ...${currentKey.slice(-4)})`);
       const result = await apiCall(ai);
+      // Thành công: reset cooldown của key này (nếu có)
+      keyCooldownMap.delete(currentKey);
       return result;
     } catch (error: any) {
       lastError = error;
@@ -91,19 +104,50 @@ async function callGeminiWithRotation<T>(
         errMsg.includes("resource_exhausted") ||
         errMsg.includes("quota") ||
         errMsg.includes("limit") ||
-        errMsg.includes("429");
+        errMsg.includes("429") ||
+        errMsg.includes("rate limit");
 
       if (isQuotaLimit && keys.length > 1) {
-        console.warn(`[Gemini Rotation] Key Index #${keyIndex + 1} hit quota. Falling back to next key...`);
+        // Đánh dấu key bị quota, đưa vào cooldown
+        const expiry = Date.now() + COOLDOWN_DURATION;
+        keyCooldownMap.set(currentKey, expiry);
+        console.warn(`[Gemini Rotation] Key #${keyIndex + 1} hit quota. Cooling down for ${COOLDOWN_DURATION/1000}s until ${new Date(expiry).toISOString()}`);
         currentKeyIndex = (currentKeyIndex + 1) % keys.length;
-        attempts++;
+        continue;
+      } else if (
+        errMsg.includes("api_key_invalid") ||
+        errMsg.includes("api key not valid") ||
+        errMsg.includes("invalid api key") ||
+        errMsg.includes("key is invalid")
+      ) {
+        // Key không hợp lệ: cooldown lâu (1 giờ)
+        const expiry = Date.now() + 3600 * 1000;
+        keyCooldownMap.set(currentKey, expiry);
+        console.error(`[Gemini Rotation] Key #${keyIndex + 1} is invalid. Cooling down for 1 hour.`);
+        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+        continue;
       } else {
+        // Các lỗi khác (không phải quota, không phải invalid): throw ngay
         throw error;
       }
     }
   }
 
-  throw lastError || new Error("All configured GEMINI_API_KEY entries returned quota limits.");
+  // Nếu tất cả key đều đang cooldown
+  if (lastError) {
+    const errMsg = (lastError.message || "").toLowerCase();
+    if (
+      errMsg.includes("resource_exhausted") ||
+      errMsg.includes("quota") ||
+      errMsg.includes("limit") ||
+      errMsg.includes("429")
+    ) {
+      throw new Error("All Gemini API keys are currently rate-limited. Please wait and try again.");
+    }
+    throw lastError;
+  }
+
+  throw new Error("All configured GEMINI_API_KEY entries exhausted or on cooldown.");
 }
 
 async function generateWithGroq(systemPrompt: string, userPrompt: string, responseFormatJson: boolean = false): Promise<string> {
