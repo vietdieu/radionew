@@ -31,11 +31,13 @@ let currentKeyIndex = 0;
 const keyCooldownMap = new Map<string, number>();
 const COOLDOWN_DURATION = 60 * 1000; // 60 giây
 
-// Global timestamps để temporarily disable failing TTS engines
 let globalGeminiTtsDisabledUntil = 0;
 let globalEdgeTtsDisabledUntil = 0;
 let globalGCloudTtsDisabledUntil = 0;
 let lastSuccessfulEngine: string | null = null;
+
+// ===== THÊM CƠ CHẾ LƯU TRẠNG THÁI FAIL TRONG REQUEST =====
+const engineFailInRequest = new Set<string>();
 
 function getKeysList(): string[] {
   const keys: string[] = [];
@@ -72,17 +74,16 @@ async function callGeminiWithRotation<T>(
   }
 
   let lastError: any = null;
-  const maxAttempts = keys.length * 2; // Duyệt tối đa 2 vòng
+  const maxAttempts = keys.length * 2;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const keyIndex = currentKeyIndex % keys.length;
     const currentKey = keys[keyIndex];
     const now = Date.now();
 
-    // Kiểm tra key có đang trong cooldown không?
     const cooldownExpiry = keyCooldownMap.get(currentKey) || 0;
     if (now < cooldownExpiry) {
-      console.log(`[Gemini Rotation] Key #${keyIndex + 1} is on cooldown until ${new Date(cooldownExpiry).toISOString()}. Skipping.`);
+      console.log(`[Gemini Rotation] Key #${keyIndex + 1} on cooldown until ${new Date(cooldownExpiry).toISOString()}. Skipping.`);
       currentKeyIndex = (currentKeyIndex + 1) % keys.length;
       continue;
     }
@@ -95,7 +96,6 @@ async function callGeminiWithRotation<T>(
     try {
       console.log(`[Gemini Rotation] Attempting call using Key Index #${keyIndex + 1} of ${keys.length} (ending ...${currentKey.slice(-4)})`);
       const result = await apiCall(ai);
-      // Thành công: reset cooldown của key này (nếu có)
       keyCooldownMap.delete(currentKey);
       return result;
     } catch (error: any) {
@@ -109,7 +109,6 @@ async function callGeminiWithRotation<T>(
         errMsg.includes("rate limit");
 
       if (isQuotaLimit && keys.length > 1) {
-        // Đánh dấu key bị quota, đưa vào cooldown
         const expiry = Date.now() + COOLDOWN_DURATION;
         keyCooldownMap.set(currentKey, expiry);
         console.warn(`[Gemini Rotation] Key #${keyIndex + 1} hit quota. Cooling down for ${COOLDOWN_DURATION/1000}s until ${new Date(expiry).toISOString()}`);
@@ -121,20 +120,17 @@ async function callGeminiWithRotation<T>(
         errMsg.includes("invalid api key") ||
         errMsg.includes("key is invalid")
       ) {
-        // Key không hợp lệ: cooldown lâu (1 giờ)
         const expiry = Date.now() + 3600 * 1000;
         keyCooldownMap.set(currentKey, expiry);
         console.error(`[Gemini Rotation] Key #${keyIndex + 1} is invalid. Cooling down for 1 hour.`);
         currentKeyIndex = (currentKeyIndex + 1) % keys.length;
         continue;
       } else {
-        // Các lỗi khác (không phải quota, không phải invalid): throw ngay
         throw error;
       }
     }
   }
 
-  // Nếu tất cả key đều đang cooldown
   if (lastError) {
     const errMsg = (lastError.message || "").toLowerCase();
     if (
@@ -709,10 +705,9 @@ const GCLOUD_VOICE_MAP: Record<string, string> = {
 async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string): Promise<string> {
   const maxRetries = 1;
   let lastError: Error | null = null;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await withTimeout(callEdgeTTSForChunk(chunk, voice, rate), 8000);
+      return await withTimeout(callEdgeTTSForChunk(chunk, voice, rate), 5000);
     } catch (err: any) {
       lastError = err;
       const waitTime = attempt * 300;
@@ -725,7 +720,6 @@ async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string):
 
 async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): Promise<string> {
   const edgeVoice = EDGE_VOICE_MAP[voice] || EDGE_VOICE_MAP["vi"] || "en-US-JennyNeural";
-
   try {
     const audioBuffer = await runEdgeTTS(chunk, {
       voice: edgeVoice,
@@ -741,17 +735,15 @@ async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): 
   }
 }
 
-// CẢI TIẾN: Google Cloud TTS với voice mapping và speaking rate tối ưu
 async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: string): Promise<string> {
   const client = getGCloudTTSClient();
   if (!client) {
     throw new Error("Google Cloud TTS client is not configured.");
   }
-
   const gcloudVoiceName = GCLOUD_VOICE_MAP[voice] || GCLOUD_VOICE_MAP["vi"] || "vi-VN-Wavenet-C";
   const gcloudLanguageCode = voice?.startsWith("vi") ? "vi-VN" : (voice?.startsWith("en-UK") ? "en-GB" : "en-US");
 
-  let speakingRate = 0.95; // Mặc định chậm hơn 5% cho rõ tiếng
+  let speakingRate = 0.95;
   if (tone === "fast") speakingRate = 1.1;
   else if (tone === "conversational") speakingRate = 1.0;
   else if (tone === "slow") speakingRate = 0.85;
@@ -771,14 +763,12 @@ async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: st
           volumeGainDb: 0
         },
       }),
-      10000 // 10s timeout
+      6000
     );
-
     const audioContent = response.audioContent;
     if (!audioContent) {
       throw new Error("Google Cloud TTS returned empty audio content.");
     }
-
     return (audioContent as Buffer).toString("base64");
   } catch (err: any) {
     throw new Error(`Google Cloud TTS API error: ${err.message || err}`);
@@ -881,9 +871,13 @@ async function callGoogleTranslateTTSForChunk(chunk: string, voice: string): Pro
 }
 
 // CẢI TIẾN: TTS endpoint với fallback logic thông minh, timeout tối ưu và log chi tiết
+// ================== ENDPOINT TTS CHÍNH ==================
 app.post("/api/tts", async (req, res): Promise<any> => {
   const { text, voice, tone } = req.body;
   const isVi = voice?.startsWith("vi") || false;
+
+  // Reset fail state trong request
+  engineFailInRequest.clear();
 
   console.log(`[TTS-DEBUG] Text length: ${text?.length || 0}`);
   console.log(`[TTS-DEBUG] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
@@ -899,9 +893,11 @@ app.post("/api/tts", async (req, res): Promise<any> => {
 
     const now = Date.now();
     
+    // Xác định engine ưu tiên dựa trên ngôn ngữ và trạng thái
     let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
     
     if (isVi) {
+      // Tiếng Việt: ưu tiên Edge → Translate → GCloud (nếu edge fail)
       if (now < globalEdgeTtsDisabledUntil) {
         if (now < globalGCloudTtsDisabledUntil) {
           activeEngine = "translate";
@@ -912,15 +908,16 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         activeEngine = "edge";
       }
     } else {
+      // Tiếng Anh: ưu tiên Gemini → Edge → Translate → GCloud
       if (now < globalGeminiTtsDisabledUntil) {
-        if (now < globalGCloudTtsDisabledUntil) {
-          if (now < globalEdgeTtsDisabledUntil) {
+        if (now < globalEdgeTtsDisabledUntil) {
+          if (now < globalGCloudTtsDisabledUntil) {
             activeEngine = "translate";
           } else {
-            activeEngine = "edge";
+            activeEngine = "gcloud";
           }
         } else {
-          activeEngine = "gcloud";
+          activeEngine = "edge";
         }
       } else {
         activeEngine = "gemini";
@@ -939,12 +936,29 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     let success = false;
     let finalAudioBuffers: Buffer[] = [];
     let attemptsCount = 0;
-    const MAX_ATTEMPTS = 5;
+    const MAX_ATTEMPTS = 3; // Giảm số lần retry engine xuống 3
     let finalEngine = activeEngine;
 
     while (!success && attemptsCount < MAX_ATTEMPTS) {
       attemptsCount++;
       console.log(`[TTS] Attempt ${attemptsCount}/${MAX_ATTEMPTS}: Processing all ${chunks.length} segments with engine "${activeEngine}"`);
+
+      // Nếu engine này đã fail trong request, bỏ qua
+      if (engineFailInRequest.has(activeEngine)) {
+        console.log(`[TTS] Engine ${activeEngine} already failed in this request. Skipping.`);
+        // Chuyển sang engine fallback tiếp theo
+        const fallbackList = isVi 
+          ? (activeEngine === "edge" ? ["translate", "gcloud"] : ["translate"])
+          : (activeEngine === "gemini" ? ["edge", "translate", "gcloud"] : ["translate", "gcloud"]);
+        const nextEngine = fallbackList.find(e => !engineFailInRequest.has(e));
+        if (nextEngine) {
+          activeEngine = nextEngine as "gemini" | "gcloud" | "edge" | "translate";
+          console.log(`[TTS] Switching to fallback engine: ${activeEngine}`);
+          continue;
+        } else {
+          break;
+        }
+      }
 
       try {
         finalAudioBuffers = [];
@@ -956,30 +970,31 @@ app.post("/api/tts", async (req, res): Promise<any> => {
           const startTime = Date.now();
 
           try {
-            if (activeEngine === "gemini") {
-              // Giảm timeout Gemini xuống 15s
-              base64Audio = await withTimeout(
-                callGeminiTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
-                8000
-              );
-            } else if (activeEngine === "gcloud") {
-              // Giảm timeout Google Cloud xuống 8s
-              base64Audio = await withTimeout(
-                callGoogleCloudTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
-                8000
-              );
-            } else if (activeEngine === "edge") {
-              // Giảm timeout Edge xuống 5s
-              base64Audio = await withTimeout(
-                callEdgeTTSWithRetry(chunk, voice || "vi-HN", rate),
-                5000
-              );
-            } else {
-              // Translate timeout 4s
-              base64Audio = await withTimeout(
-                callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN"),
-                4000
-              );
+            switch (activeEngine) {
+              case "gemini":
+                base64Audio = await withTimeout(
+                  callGeminiTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
+                  8000
+                );
+                break;
+              case "gcloud":
+                base64Audio = await withTimeout(
+                  callGoogleCloudTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
+                  6000
+                );
+                break;
+              case "edge":
+                base64Audio = await withTimeout(
+                  callEdgeTTSWithRetry(chunk, voice || "vi-HN", rate),
+                  5000
+                );
+                break;
+              case "translate":
+                base64Audio = await withTimeout(
+                  callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN"),
+                  3000
+                );
+                break;
             }
 
             const elapsed = Date.now() - startTime;
@@ -995,39 +1010,46 @@ app.post("/api/tts", async (req, res): Promise<any> => {
             
             // Fallback cho chunk này
             const fallbackEngines = isVi 
-              ? ["gcloud", "translate"] 
-              : ["gcloud", "edge", "translate"];
+              ? ["translate", "gcloud"] 
+              : ["edge", "translate", "gcloud"];
             
             let fallbackSuccess = false;
             for (const fallbackEngine of fallbackEngines) {
               if (fallbackEngine === activeEngine) continue;
+              if (engineFailInRequest.has(fallbackEngine)) continue; // bỏ qua engine đã fail
               try {
                 console.log(`[TTS] Chunk ${index+1}: Trying fallback engine ${fallbackEngine}...`);
                 const fbStart = Date.now();
-                if (fallbackEngine === "gcloud") {
-                  base64Audio = await withTimeout(
-                    callGoogleCloudTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
-                    8000
-                  );
-                } else if (fallbackEngine === "edge") {
-                  base64Audio = await withTimeout(
-                    callEdgeTTSWithRetry(chunk, voice || "vi-HN", rate),
-                    5000
-                  );
-                } else {
-                  base64Audio = await withTimeout(
-                    callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN"),
-                    4000
-                  );
+                let fbAudio = "";
+                switch (fallbackEngine) {
+                  case "gcloud":
+                    fbAudio = await withTimeout(
+                      callGoogleCloudTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
+                      6000
+                    );
+                    break;
+                  case "edge":
+                    fbAudio = await withTimeout(
+                      callEdgeTTSWithRetry(chunk, voice || "vi-HN", rate),
+                      5000
+                    );
+                    break;
+                  case "translate":
+                    fbAudio = await withTimeout(
+                      callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN"),
+                      3000
+                    );
+                    break;
                 }
-                if (base64Audio) {
+                if (fbAudio) {
                   console.log(`[TTS] Chunk ${index+1}: ${fallbackEngine} succeeded in ${Date.now() - fbStart}ms`);
-                  finalAudioBuffers.push(Buffer.from(base64Audio, "base64"));
+                  finalAudioBuffers.push(Buffer.from(fbAudio, "base64"));
                   fallbackSuccess = true;
                   break;
                 }
               } catch (fbErr: any) {
                 console.warn(`[TTS] Fallback engine "${fallbackEngine}" failed: ${fbErr.message}`);
+                engineFailInRequest.add(fallbackEngine); // đánh dấu fail
               }
             }
             
@@ -1040,6 +1062,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         success = true;
         finalEngine = activeEngine;
         
+        // Reset disabled flags nếu engine hoạt động tốt
         if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
         else if (activeEngine === "gcloud") globalGCloudTtsDisabledUntil = 0;
         else if (activeEngine === "gemini") globalGeminiTtsDisabledUntil = 0;
@@ -1049,11 +1072,12 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       } catch (err: any) {
         const errMsg = err.message || String(err);
         console.warn(`[TTS] Engine "${activeEngine}" failed during request: ${errMsg}`);
+        engineFailInRequest.add(activeEngine); // đánh dấu fail
         
         if (isVi) {
           if (activeEngine === "edge") {
             globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
-            activeEngine = "gcloud";
+            activeEngine = "translate";
           } else if (activeEngine === "gcloud") {
             globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
             activeEngine = "translate";
@@ -1065,12 +1089,12 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         } else {
           if (activeEngine === "gemini") {
             globalGeminiTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
-            activeEngine = "gcloud";
-          } else if (activeEngine === "gcloud") {
-            globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
             activeEngine = "edge";
           } else if (activeEngine === "edge") {
             globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
+            activeEngine = "translate";
+          } else if (activeEngine === "gcloud") {
+            globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
             activeEngine = "translate";
           } else {
             if (attemptsCount >= MAX_ATTEMPTS) {
