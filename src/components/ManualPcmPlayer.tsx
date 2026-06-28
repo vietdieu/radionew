@@ -169,151 +169,166 @@ export default function ManualPcmPlayer({
     { type: "outro", title: "Signing Off", text: payload.conclusion, bullets: [] as string[] }
   ];
 
-  // Initialize audio buffer
-  useEffect(() => {
-    let active = true;
+// Initialize audio buffer
+useEffect(() => {
+  let active = true;
 
-    const initAudio = async () => {
-      if (!audioChunks || audioChunks.length === 0) {
-        setSegmentOffsets([]);
-        setTotalDuration(0);
-        mainBufferRef.current = null;
-        return;
+  const initAudio = async () => {
+    if (!audioChunks || audioChunks.length === 0) {
+      setSegmentOffsets([]);
+      setTotalDuration(0);
+      mainBufferRef.current = null;
+      return;
+    }
+
+    // ===== LOẠI BỎ DUPLICATE CHUNKS =====
+    const uniqueChunks: string[] = [];
+    const seen = new Set<string>();
+    for (const chunk of audioChunks) {
+      if (!seen.has(chunk)) {
+        seen.add(chunk);
+        uniqueChunks.push(chunk);
       }
+    }
+    if (uniqueChunks.length !== audioChunks.length) {
+      console.warn(
+        `[ManualPcmPlayer] ⚠️ Found ${audioChunks.length - uniqueChunks.length} duplicate chunks. Original: ${audioChunks.length}, Unique: ${uniqueChunks.length}`
+      );
+    }
+    const chunksToProcess = uniqueChunks;
 
-      stopAudio();
-      setIsPlaying(false);
-      setCurrentTime(0);
-      elapsedOffsetRef.current = 0;
+    stopAudio();
+    setIsPlaying(false);
+    setCurrentTime(0);
+    elapsedOffsetRef.current = 0;
 
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioCtxRef.current = audioCtx;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = audioCtx;
 
-        const decodedBuffers: AudioBuffer[] = [];
+      const decodedBuffers: AudioBuffer[] = [];
 
-        for (let i = 0; i < audioChunks.length; i++) {
-          if (!active) return;
-          const chunk = audioChunks[i];
-          const arrayBuffer = base64ToArrayBuffer(chunk);
+      for (let i = 0; i < chunksToProcess.length; i++) {
+        if (!active) return;
+        const chunk = chunksToProcess[i];
+        const arrayBuffer = base64ToArrayBuffer(chunk);
 
+        try {
+          let decoded = await audioCtx.decodeAudioData(arrayBuffer);
+          
+          if (decoded.sampleRate !== 24000) {
+            const targetRate = 24000;
+            const ratio = targetRate / decoded.sampleRate;
+            const newLength = Math.round(decoded.length * ratio);
+            const newBuffer = audioCtx.createBuffer(
+              decoded.numberOfChannels,
+              newLength,
+              targetRate
+            );
+            for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+              const srcData = decoded.getChannelData(ch);
+              const dstData = newBuffer.getChannelData(ch);
+              for (let j = 0; j < newLength; j++) {
+                const srcIdx = j / ratio;
+                const idx0 = Math.floor(srcIdx);
+                const idx1 = Math.min(idx0 + 1, srcData.length - 1);
+                const frac = srcIdx - idx0;
+                dstData[j] = srcData[idx0] * (1 - frac) + srcData[idx1] * frac;
+              }
+            }
+            decoded = newBuffer;
+          }
+          
+          if (decoded.numberOfChannels > 1) {
+            const monoBuffer = audioCtx.createBuffer(1, decoded.length, decoded.sampleRate);
+            const monoData = monoBuffer.getChannelData(0);
+            for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+              const chData = decoded.getChannelData(ch);
+              for (let j = 0; j < decoded.length; j++) {
+                monoData[j] += chData[j] / decoded.numberOfChannels;
+              }
+            }
+            decoded = monoBuffer;
+          }
+          
+          decodedBuffers.push(decoded);
+        } catch (decodeErr) {
+          console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
           try {
-            let decoded = await audioCtx.decodeAudioData(arrayBuffer);
-            
-            if (decoded.sampleRate !== 24000) {
-              const targetRate = 24000;
-              const ratio = targetRate / decoded.sampleRate;
-              const newLength = Math.round(decoded.length * ratio);
-              const newBuffer = audioCtx.createBuffer(
-                decoded.numberOfChannels,
-                newLength,
-                targetRate
-              );
-              for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-                const srcData = decoded.getChannelData(ch);
-                const dstData = newBuffer.getChannelData(ch);
-                for (let j = 0; j < newLength; j++) {
-                  const srcIdx = j / ratio;
-                  const idx0 = Math.floor(srcIdx);
-                  const idx1 = Math.min(idx0 + 1, srcData.length - 1);
-                  const frac = srcIdx - idx0;
-                  dstData[j] = srcData[idx0] * (1 - frac) + srcData[idx1] * frac;
-                }
-              }
-              decoded = newBuffer;
-            }
-            
-            if (decoded.numberOfChannels > 1) {
-              const monoBuffer = audioCtx.createBuffer(1, decoded.length, decoded.sampleRate);
-              const monoData = monoBuffer.getChannelData(0);
-              for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-                const chData = decoded.getChannelData(ch);
-                for (let j = 0; j < decoded.length; j++) {
-                  monoData[j] += chData[j] / decoded.numberOfChannels;
-                }
-              }
-              decoded = monoBuffer;
-            }
-            
-            decodedBuffers.push(decoded);
-          } catch (decodeErr) {
-            console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
-            try {
-              const rawPCM = base64ToArrayBuffer(chunk);
-              const floatArray = pcmToFloat32(rawPCM);
-              const fallbackBuf = audioCtx.createBuffer(1, floatArray.length, 24000);
-              fallbackBuf.getChannelData(0).set(floatArray);
-              decodedBuffers.push(fallbackBuf);
-            } catch (pcmErr) {
-              console.error(`[ManualPcmPlayer] Fallback PCM decoding also failed for chunk ${i + 1}:`, pcmErr);
-            }
+            const rawPCM = base64ToArrayBuffer(chunk);
+            const floatArray = pcmToFloat32(rawPCM);
+            const fallbackBuf = audioCtx.createBuffer(1, floatArray.length, 24000);
+            fallbackBuf.getChannelData(0).set(floatArray);
+            decodedBuffers.push(fallbackBuf);
+          } catch (pcmErr) {
+            console.error(`[ManualPcmPlayer] Fallback PCM decoding also failed for chunk ${i + 1}:`, pcmErr);
           }
         }
+      }
 
-        if (!active) return;
-        if (decodedBuffers.length === 0) {
-          throw new Error("No audio chunks could be decoded successfully.");
-        }
+      if (!active) return;
+      if (decodedBuffers.length === 0) {
+        throw new Error("No audio chunks could be decoded successfully.");
+      }
 
-        const sampleRate = decodedBuffers[0].sampleRate;
-        const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-        const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s pause
+      const sampleRate = decodedBuffers[0].sampleRate;
+      const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
+      const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s pause cho tự nhiên
+      
+      let totalSamples = 0;
+      const offsets: { start: number; end: number }[] = [];
+
+      decodedBuffers.forEach((buf, idx) => {
+        const startSec = totalSamples / sampleRate;
+        const durationSamples = Math.round(buf.duration * sampleRate);
+        totalSamples += durationSamples;
+        const endSec = totalSamples / sampleRate;
+        offsets.push({ start: startSec, end: endSec });
         
-        let totalSamples = 0;
-        const offsets: { start: number; end: number }[] = [];
+        if (idx < decodedBuffers.length - 1) {
+          totalSamples += pauseSamples;
+        }
+      });
 
+      if (!active) return;
+      setSegmentOffsets(offsets);
+      
+      const calculatedDuration = totalSamples / sampleRate;
+      setTotalDuration(calculatedDuration);
+      console.log(`[ManualPcmPlayer] Total duration: ${calculatedDuration.toFixed(2)}s, Samples: ${totalSamples}, Rate: ${sampleRate}Hz`);
+
+      const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const outputChannel = unifiedBuffer.getChannelData(channel);
+        let writeOffset = 0;
         decodedBuffers.forEach((buf, idx) => {
-          const startSec = totalSamples / sampleRate;
-          const durationSamples = Math.round(buf.duration * sampleRate);
-          totalSamples += durationSamples;
-          const endSec = totalSamples / sampleRate;
-          offsets.push({ start: startSec, end: endSec });
-          
+          const bufSamples = Math.round(buf.duration * sampleRate);
+          if (channel < buf.numberOfChannels) {
+            const srcData = buf.getChannelData(channel);
+            const copyLength = Math.min(srcData.length, bufSamples);
+            outputChannel.set(srcData.subarray(0, copyLength), writeOffset);
+          }
+          writeOffset += bufSamples;
           if (idx < decodedBuffers.length - 1) {
-            totalSamples += pauseSamples;
+            writeOffset += pauseSamples;
           }
         });
-
-        if (!active) return;
-        setSegmentOffsets(offsets);
-        
-        // ===== FIX: Tính total duration chính xác =====
-        const calculatedDuration = totalSamples / sampleRate;
-        setTotalDuration(calculatedDuration);
-        console.log(`[ManualPcmPlayer] Total duration: ${calculatedDuration.toFixed(2)}s, Samples: ${totalSamples}, Rate: ${sampleRate}Hz`);
-
-        const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
-        for (let channel = 0; channel < numberOfChannels; channel++) {
-          const outputChannel = unifiedBuffer.getChannelData(channel);
-          let writeOffset = 0;
-          decodedBuffers.forEach((buf, idx) => {
-            const bufSamples = Math.round(buf.duration * sampleRate);
-            if (channel < buf.numberOfChannels) {
-              const srcData = buf.getChannelData(channel);
-              const copyLength = Math.min(srcData.length, bufSamples);
-              outputChannel.set(srcData.subarray(0, copyLength), writeOffset);
-            }
-            writeOffset += bufSamples;
-            if (idx < decodedBuffers.length - 1) {
-              writeOffset += pauseSamples;
-            }
-          });
-        }
-
-        mainBufferRef.current = unifiedBuffer;
-
-      } catch (err) {
-        console.error("Failed to construct audio buffer:", err);
       }
-    };
 
-    initAudio();
+      mainBufferRef.current = unifiedBuffer;
 
-    return () => {
-      active = false;
-      stopAudio();
-    };
-  }, [audioChunks]);
+    } catch (err) {
+      console.error("Failed to construct audio buffer:", err);
+    }
+  };
+
+  initAudio();
+
+  return () => {
+    active = false;
+    stopAudio();
+  };
+}, [audioChunks]);
 
   // ===== FIX: Cải thiện playAudio với timing chính xác =====
   const playAudio = (offset: number) => {
