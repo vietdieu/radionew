@@ -2312,6 +2312,10 @@ app.post("/api/podcast/publish", async (req, res): Promise<any> => {
 
     episodes.unshift(newEpisode);
     savePublishedEpisodes(episodes);
+         // Reset cache RSS feed
+    cachedRssXml = null;
+    lastRssXmlTimestamp = 0;
+    console.log("[Podcast] RSS feed cache invalidated after publishing new episode.");
 
     return res.json({
       success: true,
@@ -2382,7 +2386,12 @@ app.delete("/api/podcast/episodes/:id", async (req, res): Promise<any> => {
 
     episodes.splice(index, 1);
     savePublishedEpisodes(episodes);
-    return res.json({ success: true, message: "Episode deleted successfully" });
+        // Reset cache RSS feed
+    cachedRssXml = null;
+    lastRssXmlTimestamp = 0;
+    console.log(`[Podcast] RSS feed cache invalidated after deleting episode ${id}.`);
+
+        return res.json({ success: true, message: "Episode deleted successfully" });
   } catch (err: any) {
     console.error("Failed to delete episode:", err);
     res.status(500).json({ error: err.message || "Failed to delete episode" });
