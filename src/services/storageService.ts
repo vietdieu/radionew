@@ -4,6 +4,7 @@ const DB_NAME = "CommuteCastDB";
 const STORE_NAME = "briefings_store";
 const VOICE_HISTORY_STORE = "voiceHistory";
 const RSS_FEEDS_STORE = "rssFeeds";
+const SYNC_QUEUE_STORE = "syncQueue";
 const DB_VERSION = 8; // Tăng version lên 8 để đảm bảo onupgradeneeded luôn chạy trên tất cả trình duyệt người dùng, giải quyết dứt điểm chỉ mục url_idx
 const MAX_BRIEFINGS_LIMIT = 50; // Tự động xóa bớt khi vượt quá
 const LOCAL_STORAGE_FALLBACK_KEY_VI = "commute_cast_history_vi";
