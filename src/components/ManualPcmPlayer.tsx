@@ -195,8 +195,10 @@ useEffect(() => {
         `[ManualPcmPlayer] ⚠️ Found ${audioChunks.length - uniqueChunks.length} duplicate chunks. Original: ${audioChunks.length}, Unique: ${uniqueChunks.length}`
       );
     }
+    
     const chunksToProcess = uniqueChunks;
-
+     console.log(`[ManualPcmPlayer] Chunks to process: ${chunksToProcess.length}`);
+    
     stopAudio();
     setIsPlaying(false);
     setCurrentTime(0);
@@ -265,7 +267,8 @@ useEffect(() => {
           }
         }
       }
-
+      console.log(`[ManualPcmPlayer] Decoded buffers count: ${decodedBuffers.length}`);
+      
       if (!active) return;
       if (decodedBuffers.length === 0) {
         throw new Error("No audio chunks could be decoded successfully.");
