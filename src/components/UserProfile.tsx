@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { User, LogOut, Cloud, CloudOff, CloudLightning, RefreshCw, Key } from "lucide-react";
 import { getSupabaseClientAsync } from "../services/supabaseClient";
 import { SyncStatus } from "../hooks/useSync";
+import { performFullSyncAsync } from "../services/syncService"; // <-- Thêm import này
 import LoginModal from "./LoginModal";
 
 interface UserProfileProps {
@@ -50,11 +51,28 @@ export default function UserProfile({
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
+  // ===== SỬA HÀM ĐĂNG XUẤT: THÊM ĐỒNG BỘ TRƯỚC KHI LOGOUT =====
   const handleSignOut = async () => {
+    try {
+      console.log("[Logout] Syncing data before logout...");
+      // Chỉ đồng bộ nếu đang online
+      if (isOnline) {
+        await performFullSyncAsync();
+        console.log("[Logout] Sync completed successfully.");
+      } else {
+        console.warn("[Logout] Offline, skipping sync before logout.");
+      }
+    } catch (err) {
+      console.error("[Logout] Sync failed, but continuing logout:", err);
+    }
+
+    // Thực hiện logout
     const supabase = await getSupabaseClientAsync();
     if (supabase) {
       await supabase.auth.signOut();
       setDropdownOpen(false);
+      // Reload trang để reset trạng thái
+      window.location.href = '/';
     }
   };
 
