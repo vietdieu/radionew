@@ -367,11 +367,16 @@ app.get("/api/share/:id", async (req, res): Promise<any> => {
 
 // 1. Summarize
 app.post("/api/summarize", async (req, res): Promise<any> => {
-  const language = req.body?.preferences?.language || "en";
+  const { content, preferences } = req.body;
+  const language = preferences?.language || req.body?.language || "en";
   const isVi = language === "vi" || language === "bilingual";
 
+  console.log("[Summarize] ==== LANGUAGE DEBUG ====");
+  console.log("[Summarize] language received:", language);
+  console.log("[Summarize] isVi:", isVi);
+  console.log("[Summarize] Full preferences:", JSON.stringify(preferences, null, 2));
+
   try {
-    const { content, preferences } = req.body;
     if (!content || content.trim() === "") {
       return res.status(400).json({ error: "No news articles content provided." });
     }
@@ -409,6 +414,10 @@ LANGUAGE RULE: The entire report MUST be generated in ENGLISH.
 - Maintain native, polished English phrasing throughout all fields.`;
     }
 
+    // ===== LOG 2: Kiểm tra languageInstructions =====
+    console.log("[Summarize] languageInstructions (first 150 chars):", languageInstructions.substring(0, 150));
+    console.log("[Summarize] languageInstructions contains 'VIETNAMESE'? :", languageInstructions.includes("VIETNAMESE"));
+
     const systemPrompt = `You are an elite, highly professional veteran radio broadcast host, a smart route assistant, and the premium personal briefing anchor for CommuteCast. 
 Your tone must reflect a warm, authoritative, and deeply engaging broadcast anchor who naturally connects with listeners, rather than a robotic or flat text-to-speech engine. 
 
@@ -433,6 +442,10 @@ IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 7. Tùy chỉnh nội dung tóm tắt theo yêu cầu tiêu điểm: "${focus}".
 8. Tuân thủ độ dài hướng dẫn: ${lengthGuidelines}
 9. Áp dụng hướng dẫn riêng từ người dùng nếu có: "${customInstructions}"`;
+
+    // ===== LOG 3: Kiểm tra systemPrompt =====
+    console.log("[Summarize] systemPrompt (first 400 chars):", systemPrompt.substring(0, 400));
+    console.log("[Summarize] systemPrompt includes 'VIETNAMESE'? :", systemPrompt.includes("VIETNAMESE"));
 
     const promptText = `Generate a news broadcast report from the following raw news materials:\n\n${content}`;
 
@@ -505,6 +518,10 @@ Keep scriptText very natural for speaking. Do not include markdown bold or heade
       );
       outputText = response.text || "";
     }
+
+    // ===== LOG 4: Kiểm tra kết quả từ model =====
+    console.log("[Summarize] outputText (first 500 chars):", outputText.substring(0, 500));
+    console.log("[Summarize] outputText contains Vietnamese diacritics? (check 200 chars):", outputText.substring(0, 200));
 
     if (!outputText || outputText.trim() === "") {
       throw new Error("Empty response received from content generation model.");
