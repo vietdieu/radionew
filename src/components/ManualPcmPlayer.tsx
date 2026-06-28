@@ -220,6 +220,68 @@ export default function ManualPcmPlayer({
     }
   };
 
+  // ===== THÊM VÀO SAU HÀM applyPitchCorrection =====
+const applyPitchCorrection = async (
+  audioBuffer: AudioBuffer,
+  targetRate: number
+): Promise<AudioBuffer> => {
+  if (Math.abs(targetRate - 1.0) < 0.01) {
+    return audioBuffer;
+  }
+
+  try {
+    console.log(`[Pitch Correction] Applying for rate ${targetRate}x...`);
+    
+    const sampleRate = audioBuffer.sampleRate;
+    const numberOfChannels = audioBuffer.numberOfChannels;
+    const duration = audioBuffer.duration;
+    
+    // Sử dụng sample rate cao hơn để chất lượng tốt hơn
+    const targetSampleRate = Math.max(sampleRate, 48000);
+    const newLength = Math.ceil(duration * targetSampleRate * targetRate);
+    
+    const offlineCtx = new OfflineAudioContext(
+      numberOfChannels,
+      newLength,
+      targetSampleRate
+    );
+
+    const source = offlineCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.playbackRate.value = targetRate;
+
+    // Thêm filter để làm mượt
+    const gainNode = offlineCtx.createGain();
+    gainNode.gain.value = 1.0;
+    
+    source.connect(gainNode);
+    gainNode.connect(offlineCtx.destination);
+    source.start();
+
+    const renderedBuffer = await offlineCtx.startRendering();
+    
+    // Resample về 24000 nếu cần
+    if (renderedBuffer.sampleRate !== 24000) {
+      const resampleCtx = new OfflineAudioContext(
+        renderedBuffer.numberOfChannels,
+        Math.ceil(renderedBuffer.duration * 24000),
+        24000
+      );
+      const resampleSource = resampleCtx.createBufferSource();
+      resampleSource.buffer = renderedBuffer;
+      resampleSource.connect(resampleCtx.destination);
+      resampleSource.start();
+      const resampled = await resampleCtx.startRendering();
+      return resampled;
+    }
+    
+    return renderedBuffer;
+  } catch (err) {
+    console.warn("[Pitch Correction] Failed, using original buffer", err);
+    return audioBuffer;
+  }
+};
+  
   // ===== CẬP NHẬT BUFFER KHI THAY ĐỔI RATE =====
   useEffect(() => {
     const updateBufferForRate = async () => {
@@ -339,7 +401,7 @@ export default function ManualPcmPlayer({
 
         const sampleRate = decodedBuffers[0].sampleRate;
         const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-        const pauseSamples = Math.round(sampleRate * 0.6);
+        const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s - tự nhiên hơn
         
         let totalSamples = 0;
         const offsets: { start: number; end: number }[] = [];
@@ -449,60 +511,62 @@ export default function ManualPcmPlayer({
     setIsPlaying(true);
   };
 
-  // ===== FIX: startTrackingProgress với rate =====
-  const startTrackingProgress = () => {
-    if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
+// ===== THAY THẾ HÀM startTrackingProgress =====
+const startTrackingProgress = () => {
+  if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
 
-    const updateProgress = () => {
-      if (!audioCtxRef.current || !isPlaying) return;
+  let lastTimestamp = performance.now();
 
-      const now = audioCtxRef.current.currentTime;
-      const rate = currentPlaybackRateRef.current;
-      
-      // Sử dụng elapsed gốc + thời gian thực * rate
-      let elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * rate;
-      
-      const totalDur = totalDuration;
-      elapsedSeconds = Math.max(0, Math.min(elapsedSeconds, totalDur));
+  const updateProgress = () => {
+    if (!audioCtxRef.current || !isPlaying) return;
 
-      if (elapsedSeconds >= totalDur - 0.05) {
-        setCurrentTime(totalDur);
-        setIsPlaying(false);
-        stopAudio();
-        elapsedOffsetRef.current = 0;
-        setActiveSegmentIndex(0);
-        activeSegmentIndexRef.current = 0;
-        return;
+    const now = performance.now();
+    const delta = (now - lastTimestamp) / 1000;
+    lastTimestamp = now;
+
+    const rate = currentPlaybackRateRef.current;
+    let elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) / 1000 * rate;
+    
+    const totalDur = totalDuration;
+    elapsedSeconds = Math.max(0, Math.min(elapsedSeconds, totalDur));
+
+    if (elapsedSeconds >= totalDur - 0.03) {
+      setCurrentTime(totalDur);
+      setIsPlaying(false);
+      stopAudio();
+      elapsedOffsetRef.current = 0;
+      setActiveSegmentIndex(0);
+      activeSegmentIndexRef.current = 0;
+      return;
+    }
+
+    setCurrentTime(elapsedSeconds);
+
+    const activeIdx = segmentOffsets.findIndex(
+      (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
+    );
+    if (activeIdx !== -1 && activeIdx !== activeSegmentIndexRef.current) {
+      activeSegmentIndexRef.current = activeIdx;
+      setActiveSegmentIndex(activeIdx);
+    }
+
+    if (analyserRef.current) {
+      const dataArr = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(dataArr);
+      const values: number[] = [];
+      for (let i = 0; i < 32; i++) {
+        const weight = i < 8 ? 1.0 : i < 16 ? 1.3 : 1.6;
+        values.push(Math.min(255, (dataArr[i] || 0) * weight));
       }
-
-      setCurrentTime(elapsedSeconds);
-
-      const activeIdx = segmentOffsets.findIndex(
-        (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
-      );
-      if (activeIdx !== -1) {
-        if (activeIdx !== activeSegmentIndexRef.current) {
-          activeSegmentIndexRef.current = activeIdx;
-          setActiveSegmentIndex(activeIdx);
-        }
-      }
-
-      if (analyserRef.current) {
-        const dataArr = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(dataArr);
-        const values: number[] = [];
-        for (let i = 0; i < 32; i++) {
-          const weight = i < 8 ? 1.0 : i < 16 ? 1.3 : 1.6;
-          values.push(Math.min(255, (dataArr[i] || 0) * weight));
-        }
-        setFrequencyData(values);
-      }
-
-      animFrameIdRef.current = requestAnimationFrame(updateProgress);
-    };
+      setFrequencyData(values);
+    }
 
     animFrameIdRef.current = requestAnimationFrame(updateProgress);
   };
+
+  lastTimestamp = performance.now();
+  animFrameIdRef.current = requestAnimationFrame(updateProgress);
+};
 
   const stopTrackingProgress = () => {
     if (animFrameIdRef.current) {
