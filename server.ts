@@ -1864,14 +1864,16 @@ async function loadPublishedEpisodes(forceRefresh: boolean = false): Promise<Pub
   return localEps.length > 0 ? localEps : (cachedEpisodesInMem || []);
 }
 
-function savePublishedEpisodes(episodes: PublishedEpisode[]) {
+async function savePublishedEpisodes(episodes: PublishedEpisode[]) {
   cachedEpisodesInMem = episodes;
   lastCacheSyncTime = Date.now();
   cachedRssXml = null;
   try {
     fs.writeFileSync(PODCASTS_JSON_PATH, JSON.stringify(episodes, null, 2), "utf8");
-  } catch (err) { /* ignore */ }
-  savePublishedEpisodesToSupabaseAsync(episodes);
+  } catch (err) {
+    console.error("[Podcast] Failed to write local file:", err);
+  }
+  await savePublishedEpisodesToSupabaseAsync(episodes);
 }
 
 let gcsClientInstance: Storage | null = null;
@@ -2312,10 +2314,13 @@ app.post("/api/podcast/publish", async (req, res): Promise<any> => {
 
     episodes.unshift(newEpisode);
     savePublishedEpisodes(episodes);
+    cachedEpisodesInMem = null; // Xóa cache episodes
+    lastCacheSyncTime = 0;
          // Reset cache RSS feed
     cachedRssXml = null;
     lastRssXmlTimestamp = 0;
     console.log("[Podcast] RSS feed cache invalidated after publishing new episode.");
+    console.log("[Podcast] Cache invalidated after publishing.");
 
     return res.json({
       success: true,
@@ -2514,7 +2519,6 @@ app.get("/api/supabase-config", (req, res) => {
 });
 
 // ==================== SERVE FRONTEND ====================
-// ==================== SERVE FRONTEND ====================
 async function serveApp() {
   const distPath = path.join(process.cwd(), "dist");
   const hasDist = fs.existsSync(distPath);
@@ -2561,5 +2565,30 @@ async function serveApp() {
     console.log(`[CommuteCast Backend] running on http://localhost:${PORT}`);
   });
 }
+
+app.get("/api/debug/podcast-file", (req, res) => {
+  try {
+    if (!fs.existsSync(PODCASTS_JSON_PATH)) {
+      return res.json({ error: "File not found" });
+    }
+    const data = fs.readFileSync(PODCASTS_JSON_PATH, "utf8");
+    const parsed = JSON.parse(data);
+    res.json({
+      count: parsed.length,
+      episodes: parsed.map((ep: any) => ({ id: ep.id, title: ep.title, pubDate: ep.pubDate }))
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/debug/cache-status", (req, res) => {
+  res.json({
+    cachedEpisodesInMem: cachedEpisodesInMem ? cachedEpisodesInMem.length : 0,
+    lastCacheSyncTime: lastCacheSyncTime,
+    cachedRssXml: cachedRssXml ? "có" : "không",
+    lastRssXmlTimestamp: lastRssXmlTimestamp,
+  });
+});
 
 serveApp();
