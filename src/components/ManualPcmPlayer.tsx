@@ -254,6 +254,8 @@ useEffect(() => {
           }
           
           decodedBuffers.push(decoded);
+          console.log(`[ManualPcmPlayer] Chunk ${i} duration: ${decoded.duration.toFixed(2)}s, sampleRate: ${decoded.sampleRate}Hz`);
+          
         } catch (decodeErr) {
           console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
           try {
@@ -277,6 +279,7 @@ useEffect(() => {
       const sampleRate = decodedBuffers[0].sampleRate;
       const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
       const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s pause cho tự nhiên
+      console.log(`[ManualPcmPlayer] Pause samples: ${pauseSamples}, pause duration: ${(pauseSamples / sampleRate).toFixed(2)}s`);
       
       let totalSamples = 0;
       const offsets: { start: number; end: number }[] = [];
