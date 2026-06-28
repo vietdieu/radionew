@@ -2313,7 +2313,7 @@ app.post("/api/podcast/publish", async (req, res): Promise<any> => {
     };
 
     episodes.unshift(newEpisode);
-    savePublishedEpisodes(episodes);
+    await savePublishedEpisodes(episodes);  // <-- Thêm await
     cachedEpisodesInMem = null; // Xóa cache episodes
     lastCacheSyncTime = 0;
          // Reset cache RSS feed
