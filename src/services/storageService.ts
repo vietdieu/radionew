@@ -59,6 +59,9 @@ export function openDB(): Promise<IDBDatabase> {
         const store = db.createObjectStore("audios", { keyPath: "id" });
         store.createIndex("timestamp_idx", "timestamp", { unique: false });
       }
+      if (!db.objectStoreNames.contains("syncQueue")) {
+        db.createObjectStore("syncQueue", { keyPath: "id" });
+      }
     };
 
     request.onsuccess = (event: any) => resolve(event.target.result);
