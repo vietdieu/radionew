@@ -624,7 +624,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 // ================== API TTS ==================
 // CẢI TIẾN: Chunking text tối ưu cho tiếng Việt
-function chunkTextForTTS(text: string, maxChars = 250): string[] {
+function chunkTextForTTS(text: string, maxChars = 200): string[] {
   // Split by [BREAK_1S] first
   const rawSegments = text.split(/\[BREAK_1S\]/i);
   const finalChunks: string[] = [];
