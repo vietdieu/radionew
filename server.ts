@@ -953,8 +953,8 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         console.log(`[TTS] Engine ${activeEngine} already failed in this request. Skipping.`);
         // Chuyển sang engine fallback tiếp theo
         const fallbackList = isVi 
-          ? (activeEngine === "edge" ? ["translate", "gcloud"] : ["translate"])
-          : (activeEngine === "gemini" ? ["edge", "translate", "gcloud"] : ["translate", "gcloud"]);
+        ? (activeEngine === "edge" ? ["translate"] : ["translate"])
+        : (activeEngine === "gemini" ? ["translate"] : ["translate"]);
         const nextEngine = fallbackList.find(e => !engineFailInRequest.has(e));
         if (nextEngine) {
           activeEngine = nextEngine as "gemini" | "gcloud" | "edge" | "translate";
@@ -1015,8 +1015,8 @@ app.post("/api/tts", async (req, res): Promise<any> => {
             
             // Fallback cho chunk này
             const fallbackEngines = isVi 
-              ? ["translate", "gcloud"] 
-              : ["edge", "translate", "gcloud"];
+            ? ["translate"]   // Chỉ thử Translate nếu Edge fail
+            : ["translate"];  // Chỉ thử Translate nếu Gemini/Edge fail
             
             let fallbackSuccess = false;
             for (const fallbackEngine of fallbackEngines) {
