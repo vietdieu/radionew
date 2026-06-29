@@ -264,7 +264,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
     if (signal.aborted) throw new Error('AbortError');
     const { data: prefData, error: prefErr } = await supabase
       .from("user_preferences")
+<<<<<<< HEAD
       .select("preferences, updated_at", { signal } as any)
+=======
+      .select("preferences, updated_at", { signal })
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -282,7 +286,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
         user_id: userId,
         preferences: localPref,
         updated_at: new Date().toISOString()
+<<<<<<< HEAD
       }, { signal } as any);
+=======
+      }, { signal });
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
     } else if (!localPref && prefData) {
       localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
     }
@@ -291,7 +299,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
     if (signal.aborted) throw new Error('AbortError');
     const { data: cloudVoice, error: voiceErr } = await supabase
       .from("voice_history")
+<<<<<<< HEAD
       .select("*", { signal } as any)
+=======
+      .select("*", { signal })
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
       .eq("user_id", userId);
 
     if (signal.aborted) throw new Error('AbortError');
@@ -330,7 +342,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
             sources: item.sources || [],
             timestamp: item.timestamp,
             updated_at: new Date().toISOString()
+<<<<<<< HEAD
           }, { signal } as any);
+=======
+          }, { signal });
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
         }
       }
     }
@@ -339,7 +355,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
     if (signal.aborted) throw new Error('AbortError');
     const { data: cloudBriefings, error: briefErr } = await supabase
       .from("briefings")
+<<<<<<< HEAD
       .select("*", { signal } as any)
+=======
+      .select("*", { signal })
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
       .eq("user_id", userId);
 
     if (signal.aborted) throw new Error('AbortError');
@@ -399,7 +419,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
             like_count: lb.likeCount || 0,
             share_count: lb.shareCount || 0,
             updated_at: new Date().toISOString()
+<<<<<<< HEAD
           }, { signal } as any);
+=======
+          }, { signal });
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
         }
       }
     }
@@ -420,7 +444,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
           like_count: lb.likeCount || 0,
           share_count: lb.shareCount || 0,
           updated_at: new Date().toISOString()
+<<<<<<< HEAD
         }, { signal } as any);
+=======
+        }, { signal });
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
       }
     }
 

@@ -680,10 +680,15 @@ export async function incrementBriefingShares(id: string): Promise<number> {
 export interface SyncQueueItem {
   id: string;
   type: string;
+<<<<<<< HEAD
   data?: any;
   timestamp: number;
   targetId?: string;
   action?: string;
+=======
+  data: any;
+  timestamp: number;
+>>>>>>> bff4e1099978484382c8602babd82d4b4b3b17fb
 }
 
 export async function saveSyncQueue(queue: SyncQueueItem[]): Promise<void> {
