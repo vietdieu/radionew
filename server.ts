@@ -1319,11 +1319,12 @@ You have access to several actions in the application. Analyze the user's input 
    - Action JSON: {"type": "add_to_news", "param": ""}
 
 3. Read/Summarize RSS news:
-   - User intent: requests to read, fetch, or summarize latest RSS feeds or news (e.g., "Đọc tin RSS", "Tóm tắt nguồn tin RSS", "Read RSS", "Summarize RSS").
+   - User intent: requests to compile, fetch, or summarize latest RSS feeds/articles (e.g., "Tổng hợp tin RSS", "Tóm tắt nguồn tin RSS", "Tóm tắt RSS", "Summarize RSS", "Fetch RSS").
    - Action JSON: {"type": "read_rss", "param": ""}
+   - Note: If the user simply asks to "Đọc RSS" or "Đọc tin RSS" (without asking to summarize or fetch), do NOT trigger this action. Instead, ask "Bạn muốn đọc chủ đề gì?" or offer suggestions, and return action "none".
 
 4. Normal conversation/general query:
-   - User intent: general conversation, greeting, asking a question, search query, explaining a concept.
+   - User intent: general conversation, greeting, "Đọc RSS" (just asking what topic to read), asking a question, search query, explaining a concept.
    - Action JSON: {"type": "none", "param": ""}
 
 USER PREFERENCE CONTEXT (HISTORICAL INTERESTS):
@@ -1492,11 +1493,16 @@ Response Schema:
         localAnswer = "Understood! I will append the conversational content above to your broadcast script editor.";
       }
       // 3. Read RSS feeds
-      else if (msgLower.includes("đọc tin rss") || msgLower.includes("tóm tắt rss") || msgLower.includes("đọc rss") || msgLower.includes("tóm tắt nguồn tin rss")) {
+      else if (msgLower.includes("tổng hợp rss") || msgLower.includes("tổng hợp tin rss") || msgLower.includes("tóm tắt rss") || msgLower.includes("tóm tắt nguồn tin rss")) {
         localAction = { type: "read_rss", param: "" };
         localAnswer = isVi
           ? "Đang tiến hành kết nối, đồng bộ và tổng hợp thông tin từ các nguồn tin RSS của bạn..."
           : "Connecting, syncing, and aggregating articles from your subscribed RSS channels...";
+      } else if (msgLower.includes("đọc rss") || msgLower === "doc rss" || msgLower === "đọc mục rss" || msgLower === "đọc tin rss" || msgLower === "doc tin rss") {
+        localAction = { type: "none", param: "" };
+        localAnswer = isVi
+          ? "Bạn muốn đọc chủ đề gì từ nguồn tin RSS hôm nay? Hãy chọn một trong các chủ đề gợi ý dưới đây hoặc gõ chủ đề bạn muốn:"
+          : "What topic would you like to read from your RSS feeds today? Choose one of the suggested topics below or type your own:";
       } else if (msgLower.includes("read rss") || msgLower.includes("summarize rss") || msgLower.includes("fetch rss")) {
         localAction = { type: "read_rss", param: "" };
         localAnswer = "Connecting, syncing, and aggregating articles from your subscribed RSS channels...";
@@ -1508,20 +1514,24 @@ Response Schema:
 
 Bạn hoàn toàn có thể tiếp tục ra lệnh trực tiếp bằng tiếng Việt với các cú pháp sau:
 - "Tạo bản tin về [chủ đề]" (Ví dụ: Tạo bản tin về Công nghệ xanh)
-- "Đọc tin RSS" để quét và tổng hợp tự động các luồng RSS của bạn.
+- "Tổng hợp tin RSS" để quét và tổng hợp tự động các luồng RSS của bạn.
 - "Thêm vào bản tin" để lưu trữ nhanh cuộc trò chuyện vào trình soạn thảo.`
           : `Hi! The AI server is currently handling extreme traffic volumes on free API tiers (Rate Limit). I have entered Smart Fallback Mode to keep your assistant responsive.
 
 You can continue driving actions directly with these quick text triggers:
 - "Create news about [topic]" (e.g., Create news about Space Exploration)
-- "Read RSS" to aggregate and summarize your feed subscriptions.
+- "Summarize RSS" to aggregate and summarize your feed subscriptions.
 - "Add to news" to quickly insert my last response into your script editor.`;
       }
 
       result = {
         speechResponse: localAnswer,
         answer: localAnswer,
-        suggestedTopics: [],
+        suggestedTopics: (msgLower.includes("rss") || msgLower === "đọc rss") ? [
+          { topic: "Công nghệ", reason: isVi ? "Cập nhật các tin tức công nghệ mới nhất" : "Update latest tech news" },
+          { topic: "Kinh doanh", reason: isVi ? "Theo dõi chuyển động thị trường tài chính" : "Follow financial market trends" },
+          { topic: "Khoa học", reason: isVi ? "Khám phá các nghiên cứu mới và không gian" : "Explore new research and space" }
+        ] : [],
         action: localAction,
         sources: []
       };

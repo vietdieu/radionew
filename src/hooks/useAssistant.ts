@@ -204,24 +204,40 @@ export function useAssistant({
   }, [isDrivingMode, speakRecommendation]);
 
   // Handle RSS actions
-  const handleRssAction = useCallback(async () => {
+  const handleRssAction = useCallback(async (existingMessageId?: string) => {
+    const loadingMessageId = existingMessageId || Math.random().toString();
     try {
       setIsProcessing(true);
       setErrorMsg(null);
 
-      const loadingMessageId = Math.random().toString();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: loadingMessageId,
-          role: "assistant",
-          content:
-            uiLanguage === "vi"
-              ? "Đang quét các nguồn tin RSS của bạn..."
-              : "Scanning your RSS feeds...",
-          timestamp: new Date(),
-        },
-      ]);
+      if (!existingMessageId) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: loadingMessageId,
+            role: "assistant",
+            content:
+              uiLanguage === "vi"
+                ? "Đang quét các nguồn tin RSS của bạn..."
+                : "Scanning your RSS feeds...",
+            timestamp: new Date(),
+          },
+        ]);
+      } else {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === existingMessageId
+              ? {
+                  ...msg,
+                  content:
+                    uiLanguage === "vi"
+                      ? "Đang kết nối và đồng bộ các nguồn tin RSS..."
+                      : "Connecting and syncing RSS feeds...",
+                }
+              : msg
+          )
+        );
+      }
 
       const feeds = await getRSSFeeds();
       if (!feeds || feeds.length === 0) {
@@ -250,6 +266,20 @@ export function useAssistant({
         speakRecommendation(text);
         return;
       }
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? {
+                ...msg,
+                content:
+                  uiLanguage === "vi"
+                    ? "Đang tổng hợp nội dung các bài viết bằng AI..."
+                    : "Synthesizing article content using AI...",
+              }
+            : msg
+        )
+      );
 
       const topArticles = articles.slice(0, 10);
       const formattedContext = formatArticlesForPrompt(topArticles, uiLanguage);
@@ -292,10 +322,17 @@ export function useAssistant({
       handleAutoSpeak(validatedData.speechResponse);
     } catch (err: any) {
       console.error("[useAssistant] RSS error:", err);
-      setErrorMsg(
+      const errorText =
         uiLanguage === "vi"
           ? "Không thể tóm tắt tin RSS vào lúc này. Vui lòng thử lại sau."
-          : "Unable to summarize RSS feeds at this time. Please try again later."
+          : "Unable to summarize RSS feeds at this time. Please try again later.";
+      
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === loadingMessageId
+            ? { ...msg, content: errorText }
+            : msg
+        )
       );
     } finally {
       setIsProcessing(false);
@@ -320,6 +357,19 @@ export function useAssistant({
     const updatedHistory = [...messages, userMessage];
     setMessages(updatedHistory);
     setIsProcessing(true);
+
+    const textLower = text.toLowerCase().trim();
+    if (
+      textLower === "tổng hợp tin rss" ||
+      textLower === "tổng hợp rss" ||
+      textLower === "tóm tắt rss" ||
+      textLower === "tóm tắt nguồn tin rss" ||
+      textLower === "summarize rss" ||
+      textLower === "fetch rss"
+    ) {
+      await handleRssAction();
+      return;
+    }
 
     try {
       // Retrieve Top 5 preferences from IndexedDB in the background
@@ -402,7 +452,7 @@ export function useAssistant({
             },
           ]);
         } else if (actionType === "read_rss") {
-          await handleRssAction();
+          await handleRssAction(assistantMessage.id);
         }
       }
     } catch (err: any) {
