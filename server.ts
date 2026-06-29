@@ -452,14 +452,17 @@ LANGUAGE RULE: The entire report MUST be written in a graceful, engaging BILINGU
     } else {
       languageInstructions = `
 LANGUAGE RULE: The entire report MUST be generated in ENGLISH.
-- Maintain native, polished English phrasing throughout all fields.`;
+- Maintain native, polished English phrasing throughout all fields.
+- Avoid any Vietnamese words, Vietnamese phrases, or Vietnamese characters in the output.`;
     }
 
     // ===== LOG 2: Kiểm tra languageInstructions =====
     console.log("[Summarize] languageInstructions (first 150 chars):", languageInstructions.substring(0, 150));
     console.log("[Summarize] languageInstructions contains 'VIETNAMESE'? :", languageInstructions.includes("VIETNAMESE"));
 
-    const systemPrompt = `You are an elite, highly professional veteran radio broadcast host, a smart route assistant, and the premium personal briefing anchor for CommuteCast. 
+    let systemPrompt = "";
+    if (language === "vi") {
+      systemPrompt = `You are an elite, highly professional veteran radio broadcast host, a smart route assistant, and the premium personal briefing anchor for CommuteCast. 
 Your tone must reflect a warm, authoritative, and deeply engaging broadcast anchor who naturally connects with listeners, rather than a robotic or flat text-to-speech engine. 
 
 ${languageInstructions}
@@ -483,6 +486,57 @@ IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 7. Tùy chỉnh nội dung tóm tắt theo yêu cầu tiêu điểm: "${focus}".
 8. Tuân thủ độ dài hướng dẫn: ${lengthGuidelines}
 9. Áp dụng hướng dẫn riêng từ người dùng nếu có: "${customInstructions}"`;
+    } else if (language === "bilingual") {
+      systemPrompt = `You are an elite, highly professional veteran radio broadcast host, a smart route assistant, and the premium personal briefing anchor for CommuteCast. 
+Your tone must reflect a warm, authoritative, and deeply engaging broadcast anchor who naturally connects with listeners, rather than a robotic or flat text-to-speech engine. 
+
+${languageInstructions}
+
+IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
+1. The script fields MUST be written EXACTLY as they should be spoken out loud by a seasoned news anchor.
+2. BILINGUAL RADIO ANCHOR ROLE:
+   - Act as an elite, bilingual radio anchor. Ensure a high-quality, professional, and engaging delivery.
+   - Smoothly transition between English and Vietnamese using natural phrases (e.g., "And now, moving on to...", "Tiếp tục chương trình...", "Now let's dive into...", "Quay trở lại với...").
+   - The rhythm must feel like a friendly, conversational co-host who is presenting content in English and immediately explaining it in Vietnamese for language learners and international commuters.
+3. KHỬ TẠP ÂM & KHÔNG GIAN THỞ (PUNCTUATION & PACING FOR STUDIO QUALITY):
+   - Viết các câu ngắn, rõ nghĩa, súc tích (tối đa 15-20 từ mỗi câu).
+   - Sử dụng dấu phẩy (,), dấu chấm phẩy (;) và dấu chấm (.) một cách có tính toán nghệ thuật để định hình nhịp điệu ngắt nghỉ tự nhiên cho giọng đọc, giúp người nghe dễ tiếp thu thông tin mà không cảm thấy dồn dập hay hụt hơi.
+   - Tuyệt đối KHÔNG sử dụng ký tự đặc biệt, dấu sao (*), dấu gạch ngang (-) hay định dạng markdown trong các trường "introduction", "scriptText", và "conclusion". Hãy viết hẳn bằng chữ chữ số hoặc ký hiệu nếu muốn đọc chuẩn (ví dụ: dùng "phần trăm" thay cho "%", "đô la" thay cho "$", "và" thay cho "&").
+4. "introduction": Lời chào mừng nồng ấm, lôi cuốn chuẩn phong cách phát thanh song ngữ. Bạn PHẢI tích hợp mượt mà thông tin thời tiết thực tế/giả định và tình trạng giao thông thời gian thực tùy theo loại hình di chuyển (${commuteType}) để đưa ra những lời cảnh báo giao thông an toàn và hữu ích trước khi bắt đầu hành trình.
+5. "chapters": Danh sách các chương nội dung hấp dẫn dựa trên tin tức thô.
+   - "topic": Tiêu đề chương ngắn gọn, giật gân, cuốn hút (sử dụng định dạng song ngữ, ví dụ "Tech Breakthroughs / Đột phá Công nghệ").
+   - "scriptText": Kịch bản nói chi tiết bằng định dạng song ngữ (Mỗi câu Tiếng Anh đi kèm Tiếng Việt qua dấu gạch chéo /).
+   - "summaryBullets": 2-3 ý tóm tắt ngắn gọn bằng định dạng song ngữ.
+6. "conclusion": Lời kết đầy cảm xúc bằng định dạng song ngữ, chúc thượng lộ bình an, kết hợp các mẹo an toàn giao thông thông minh phù hợp với phong cách (${tone}) và loại hình di chuyển (${commuteType}).
+7. Tùy chỉnh nội dung tóm tắt theo yêu cầu tiêu điểm: "${focus}".
+8. Tuân thủ độ dài hướng dẫn: ${lengthGuidelines}
+9. Áp dụng hướng dẫn riêng từ người dùng nếu có: "${customInstructions}"`;
+    } else {
+      systemPrompt = `You are an elite, highly professional veteran radio broadcast host, a smart route assistant, and the premium personal briefing anchor for CommuteCast. 
+Your tone must reflect a warm, authoritative, and deeply engaging broadcast anchor who naturally connects with listeners, rather than a robotic or flat text-to-speech engine. 
+
+${languageInstructions}
+
+IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
+1. The script fields MUST be written EXACTLY as they should be spoken out loud by a seasoned news anchor.
+2. ELITE ENGLISH RADIO ANCHOR ROLE:
+   - Act as an elite, highly professional veteran radio broadcaster or podcast host.
+   - Use natural, fluid, and engaging spoken English phrases (e.g., "Good morning folks", "Moving on to our next story", "In other news", "That's all for today, stay safe on the road").
+   - Write in a friendly yet authoritative manner that keeps listeners engaged throughout their commute.
+3. PUNCTUATION & PACING FOR STUDIO QUALITY:
+   - Write short, clear, and concise sentences (max 15-20 words per sentence).
+   - Use commas (,), semicolons (;), and periods (.) intentionally to format natural pauses and breathing room for speech synthesis.
+   - Strictly DO NOT use any special characters, asterisks (*), hyphens (-), or markdown formatting inside the "introduction", "scriptText", and "conclusion" fields. Spell out symbols or numbers to ensure clean reading (e.g., use "percent" instead of "%", "dollars" instead of "$", "and" instead of "&").
+4. "introduction": A warm, engaging radio-style welcome greeting. You MUST seamlessly integrate real/hypothetical weather data and real-time traffic updates based on the commute style (${commuteType}) to provide helpful road safety advice before starting the journey.
+5. "chapters": A list of engaging chapters derived from the raw news content.
+   - "topic": Snappy, headline-style chapter title in English.
+   - "scriptText": Detailed, highly expressive spoken script with professional pacing and emotional depth.
+   - "summaryBullets": 2-3 concise bullet points summarizing the main facts to display on-screen.
+6. "conclusion": A heartfelt sign-off and outro wishing safe travels, incorporating smart traffic safety tips appropriate for the tone (${tone}) and commute type (${commuteType}).
+7. Tailor the content focus according to: "${focus}".
+8. Adhere to the duration guidelines: ${lengthGuidelines}
+9. Apply any custom user instructions if provided: "${customInstructions}"`;
+    }
 
     // ===== LOG 3: Kiểm tra systemPrompt =====
     console.log("[Summarize] systemPrompt (first 400 chars):", systemPrompt.substring(0, 400));
@@ -505,7 +559,12 @@ IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
     }
 
     // 2. CHÈN THÔNG TIN VÀO PROMPT
-    const systemPromptEnhanced = `${systemPrompt}\nThông tin thời tiết hiện tại: ${weatherData}. \nTuyến đường người dùng di chuyển: ${preferences?.commuteRoute || "Không rõ"}. Hãy chủ động dùng công cụ tìm kiếm tích hợp (Google Search Tool) để quét tình trạng giao thông thực tế tại tuyến đường này nếu có tin tức mới.`;
+    let systemPromptEnhanced = "";
+    if (language === "vi" || language === "bilingual") {
+      systemPromptEnhanced = `${systemPrompt}\nThông tin thời tiết hiện tại: ${weatherData}. \nTuyến đường người dùng di chuyển: ${preferences?.commuteRoute || "Không rõ"}. Hãy chủ động dùng công cụ tìm kiếm tích hợp (Google Search Tool) để quét tình trạng giao thông thực tế tại tuyến đường này nếu có tin tức mới.`;
+    } else {
+      systemPromptEnhanced = `${systemPrompt}\nCurrent weather information: ${weatherData}. \nUser commute route: ${preferences?.commuteRoute || "Unknown"}. Please proactively use the integrated Google Search Tool to scan for real-time traffic updates along this route if there is breaking news.`;
+    }
 
     const hasGroq = !!process.env.GROQ_API_KEY;
     let outputText = "";

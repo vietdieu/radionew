@@ -10,6 +10,32 @@
     <meta name="theme-color" content="#0f172a" />
   </head>
   <body>
+    <!-- Global Error Overlay for Debugging -->
+    <div id="error-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; color: #f1f5f9; padding: 24px; font-family: monospace; z-index: 99999; overflow: auto;">
+      <h2 style="color: #ef4444; margin-bottom: 16px;">⚠️ Ứng dụng gặp sự cố khởi động / Application Runtime Error</h2>
+      <p style="margin-bottom: 8px;">Hệ thống phát hiện lỗi Javascript dưới client sau đây gây ra hiện tượng màn hình trắng:</p>
+      <pre id="error-message" style="background: #1e293b; padding: 16px; border-radius: 8px; border: 1px solid #334155; white-space: pre-wrap; word-break: break-all; color: #f87171;"></pre>
+      <button onclick="window.location.reload(true)" style="margin-top: 16px; background: #06b6d4; color: #0f172a; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Tải lại trang / Reload Page</button>
+      <button onclick="localStorage.clear(); sessionStorage.clear(); window.location.reload(true);" style="margin-top: 16px; margin-left: 8px; background: #e11d48; color: #ffffff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Xóa Cache Local & Reset</button>
+    </div>
+    <script>
+      window.addEventListener('error', function(e) {
+        var overlay = document.getElementById('error-overlay');
+        var msg = document.getElementById('error-message');
+        if (overlay && msg) {
+          overlay.style.display = 'block';
+          msg.textContent = e.message + '\nat ' + e.filename + ':' + e.lineno + ':' + e.colno + '\n\nStack:\n' + (e.error ? e.error.stack : 'No stack trace available');
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var overlay = document.getElementById('error-overlay');
+        var msg = document.getElementById('error-message');
+        if (overlay && msg) {
+          overlay.style.display = 'block';
+          msg.textContent = 'Unhandled Promise Rejection: ' + e.reason + '\n\nStack:\n' + (e.reason && e.reason.stack ? e.reason.stack : 'No stack trace available');
+        }
+      });
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
