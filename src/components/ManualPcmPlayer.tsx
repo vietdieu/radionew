@@ -214,7 +214,19 @@ useEffect(() => {
       for (let i = 0; i < chunksToProcess.length; i++) {
         if (!active) return;
         const chunk = chunksToProcess[i];
-        const arrayBuffer = base64ToArrayBuffer(chunk);
+        
+        let arrayBuffer: ArrayBuffer;
+        if (chunk.startsWith("http")) {
+          try {
+            const res = await fetch(chunk);
+            arrayBuffer = await res.arrayBuffer();
+          } catch (fetchErr) {
+            console.error(`[ManualPcmPlayer] Failed to fetch cloud audio chunk ${i}:`, fetchErr);
+            continue;
+          }
+        } else {
+          arrayBuffer = base64ToArrayBuffer(chunk);
+        }
 
         try {
           let decoded = await audioCtx.decodeAudioData(arrayBuffer);
@@ -260,7 +272,7 @@ useEffect(() => {
         } catch (decodeErr) {
           console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
           try {
-            const rawPCM = base64ToArrayBuffer(chunk);
+            const rawPCM = chunk.startsWith("http") ? arrayBuffer : base64ToArrayBuffer(chunk);
             const floatArray = pcmToFloat32(rawPCM);
             const fallbackBuf = audioCtx.createBuffer(1, floatArray.length, 24000);
             fallbackBuf.getChannelData(0).set(floatArray);
@@ -700,7 +712,20 @@ useEffect(() => {
     }
 
     try {
-      const arrayBuffers = audioChunks.map(chunk => base64ToArrayBuffer(chunk));
+      const arrayBuffers: ArrayBuffer[] = [];
+      for (const chunk of audioChunks) {
+        if (chunk.startsWith("http")) {
+          try {
+            const res = await fetch(chunk);
+            const ab = await res.arrayBuffer();
+            arrayBuffers.push(ab);
+          } catch (fetchErr) {
+            console.error("[ManualPcmPlayer] Export fetch chunk error:", fetchErr);
+          }
+        } else {
+          arrayBuffers.push(base64ToArrayBuffer(chunk));
+        }
+      }
       
       const totalByteLength = arrayBuffers.reduce((acc, ab) => acc + ab.byteLength, 0);
       const concatenatedPCM = new Uint8Array(totalByteLength);

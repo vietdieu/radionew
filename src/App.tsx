@@ -51,10 +51,13 @@ import { motion, AnimatePresence } from "motion/react";
 import { useBriefcase } from "./hooks/useBriefcase";
 import { useUserPreferences } from "./components/UserPreferencesProvider";
 import { incrementBriefingLikes } from "./services/storageService";
+import { recordInteraction } from "./services/interactionService";
+import { schedulePreferenceCalculation } from "./services/preferenceService";
 import DrivingMode from "./components/DrivingMode";
 import SampleBriefings from "./components/SampleBriefings";
 import StorageStats from "./components/StorageStats";
 import VoiceSearch from "./components/VoiceSearch";
+import AssistantChat from "./components/AssistantChat";
 import TopicSuggestions from "./components/TopicSuggestions";
 import RSSManager from "./components/RSSManager";
 import TrendingBriefings from "./components/TrendingBriefings";
@@ -66,6 +69,7 @@ import { Routes, Route } from "react-router-dom";
 import SharedBriefingPage from "./components/SharedBriefingPage";
 import { useSync } from "./hooks/useSync";
 import UserProfile from "./components/UserProfile";
+import SyncStatus from "./components/SyncStatus";
 import { syncSaveVoiceHistoryAsync } from "./services/syncService";
 import { saveEpisodeToOffline, getEpisodeFromOffline, deleteOldEpisodes } from "./services/offlineStorageService";
 
@@ -393,6 +397,7 @@ export default function App() {
 
   useEffect(() => {
     loadPodcastEpisodes();
+    schedulePreferenceCalculation();
   }, []);
 
   const handlePublishPodcast = async (targetBriefId?: string, silentSuccess: boolean = false) => {
@@ -742,6 +747,13 @@ const handleCreateNews = async (categoryOverride?: string) => {
     const categoryToUse = typeof categoryOverride === 'string' 
       ? categoryOverride 
       : selectedNewsCategory;
+
+    // Ghi nhận tương tác click chủ đề cho Recommendation Engine
+    if (categoryToUse) {
+      recordInteraction(categoryToUse, "click").catch((err) =>
+        console.error("Failed to record click interaction:", err)
+      );
+    }
     
     // Nếu categoryOverride là string hợp lệ, cập nhật state
     if (typeof categoryOverride === 'string' && categoryOverride) {
@@ -1107,6 +1119,15 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
     }
     setSelectedBriefId(newBriefing.id);
 
+    // Ghi nhận tương tác view cho từng chủ đề chương của bản tin vừa tạo
+    scriptPayload.chapters?.forEach((ch: any) => {
+      if (ch.topic) {
+        recordInteraction(ch.topic, "view", ch.id || newBriefing.id).catch((err) =>
+          console.error("Failed to record view interaction:", err)
+        );
+      }
+    });
+
     // Tự động xuất bản podcast nếu được kích hoạt
     if (isAutoPublish) {
       console.log("[Auto-Publish] Automatically uploading newly dệt briefing as podcast:", newBriefing.id);
@@ -1148,6 +1169,15 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         setPreferences(fullItem.preferences);
         setSelectedBriefId(fullItem.id);
         setStep("ready");
+
+        // Ghi nhận tương tác view cho từng chủ đề chương của bản tin lịch sử được mở
+        fullItem.payload?.chapters?.forEach((ch: any) => {
+          if (ch.topic) {
+            recordInteraction(ch.topic, "view", ch.id || fullItem.id).catch((err) =>
+              console.error("Failed to record view interaction on load:", err)
+            );
+          }
+        });
       } else {
         alert(uiLanguage === "vi" ? "Không thể tải nội dung đầy đủ của bản tin này." : "Failed to load full briefing content.");
       }
@@ -1217,6 +1247,9 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
 
           {/* Quick status controls */}
           <div className="flex items-center gap-3">
+            {/* Visual Sync Status Feedback Indicator */}
+            <SyncStatus uiLanguage={uiLanguage} />
+
             {/* Cloud User Profile & Synchronizer */}
             <UserProfile
               user={user}
@@ -1225,14 +1258,6 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               onSync={triggerSync}
               onAbortSync={abortSync}   // <-- Truyền hàm hủy
               uiLanguage={uiLanguage}
-            />
-
-            {/* AI Voice Search Assistant */}
-            <VoiceSearch
-              uiLanguage={uiLanguage}
-              newsContent={newsContent}
-              setNewsContent={setNewsContent}
-              getApiUrl={getApiUrl}
             />
 
             {/* Realtime dynamic Language switcher toggle */}
@@ -1362,7 +1387,6 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
           
           {/* Smart Topic Suggestions */}
           <TopicSuggestions
-            savedBriefings={savedBriefings}
             uiLanguage={uiLanguage}
             onSelectTopic={(topic) => handleCreateNews(topic)}
             isGenerating={isGeneratingNews}
@@ -2142,6 +2166,14 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                                 e.stopPropagation();
                                 await incrementBriefingLikes(item.id);
                                 refreshBriefings(false);
+                                // Ghi nhận tương tác like cho từng chủ đề trong chương
+                                item.payload?.chapters?.forEach((ch: any) => {
+                                  if (ch.topic) {
+                                    recordInteraction(ch.topic, "like", ch.id || item.id).catch((err) =>
+                                      console.error("Failed to record like interaction:", err)
+                                    );
+                                  }
+                                });
                               }}
                               className="text-[10px] text-slate-550 hover:text-rose-600 font-bold bg-white hover:bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 transition-all flex items-center gap-1 cursor-pointer"
                               title={uiLanguage === "vi" ? "Thích bản tin" : "Like briefing"}
@@ -2154,7 +2186,17 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                             <ShareButton
                               briefingId={item.id}
                               uiLanguage={uiLanguage}
-                              onShareSuccess={() => refreshBriefings(false)}
+                              onShareSuccess={() => {
+                                refreshBriefings(false);
+                                // Ghi nhận tương tác share cho từng chủ đề trong chương
+                                item.payload?.chapters?.forEach((ch: any) => {
+                                  if (ch.topic) {
+                                    recordInteraction(ch.topic, "share", ch.id || item.id).catch((err) =>
+                                      console.error("Failed to record share interaction:", err)
+                                    );
+                                  }
+                                });
+                              }}
                             />
                           </div>
                         </div>
@@ -2207,6 +2249,16 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
           </div>
         </div>
       </footer>
+
+      {/* Floating AI Multiturn Assistant Chat Window */}
+      <AssistantChat
+        uiLanguage={uiLanguage}
+        getApiUrl={getApiUrl}
+        handleCreateNews={handleCreateNews}
+        newsContent={newsContent}
+        setNewsContent={setNewsContent}
+        isDrivingMode={userPref.isDrivingMode}
+      />
 
     </div>
 

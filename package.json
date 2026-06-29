@@ -37,7 +37,8 @@
     "typescript": "~5.8.2",
     "uuid": "^14.0.1",
     "vite": "^6.2.3",
-    "xml2js": "^0.6.2"
+    "xml2js": "^0.6.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",

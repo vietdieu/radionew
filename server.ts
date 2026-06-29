@@ -962,9 +962,9 @@ function detectLanguage(text: string): "vi" | "en" {
   const hasDiacritics = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]/i.test(text);
   if (hasDiacritics) return "vi";
   
-  // Kiểm tra một số từ Tiếng Việt thông dụng không có dấu để tránh bỏ sót
-  const commonViWordsNoDiacritics = /\b(va|cua|la|trong|mot|co|duoc|cho|voi|nhung|de|ve|den|ra|tren|sau|chua|tu|co|nay|khong|nhu|ma)\b/i;
-  if (commonViWordsNoDiacritics.test(text)) {
+  // Kiểm tra một số từ Tiếng Việt đặc trưng không dấu có độ dài lớn, không trùng lặp với từ Tiếng Anh thông dụng
+  const uniqueViWordsNoDiacritics = /\b(trong|khong|nhung|cua|duoc|nguoi|chuyen|viet|luon|nhieu|duong|thanh|hoac|chung|toi)\b/i;
+  if (uniqueViWordsNoDiacritics.test(text)) {
     return "vi";
   }
   
@@ -1279,6 +1279,257 @@ Your response must be a JSON object with the following structure:
   } catch (error: any) {
     console.error("Voice Query error:", error);
     const isVi = language === "vi" || language === "vi-VN" || language === "bilingual";
+    const friendlyError = parseGeminiError(error, isVi, false);
+    return res.status(500).json({ error: friendlyError });
+  }
+});
+
+// 5. Assistant Chat (Multi-turn with actions & search grounding)
+app.post("/api/assistant-chat", async (req, res): Promise<any> => {
+  const { history = [], message, language, userPreferences = [] } = req.body;
+  const isVi = language === "vi" || language === "vi-VN" || language === "bilingual";
+
+  try {
+    if (!message || message.trim() === "") {
+      return res.status(400).json({ error: "No message provided." });
+    }
+
+    const userPreferencesText = Array.isArray(userPreferences) && userPreferences.length > 0
+      ? userPreferences.map((p: string, idx: number) => `${idx + 1}. ${p}`).join("\n")
+      : "No user preferences recorded yet.";
+
+    const systemPrompt = `
+You are CommuteCast Virtual Assistant - a professional, highly helpful, and engaging companion in a smart personalized news radio application.
+Your name is CommuteCast Assistant.
+
+CRITICAL LANGUAGE REQUIREMENT:
+You MUST respond in the EXACT same language as the user's latest query or conversation context.
+- If the user talks/queries in Vietnamese (or if the input contains Vietnamese characters/diacritics), you MUST answer in standard, fluent, natural, human-like Vietnamese (Tiếng Việt). Under no circumstances should you return an English answer for a Vietnamese query!
+- If the user talks in English, answer in English.
+
+FUNCTIONAL CAPABILITIES & INTENT DETECTION (ACTIONS):
+You have access to several actions in the application. Analyze the user's input carefully to detect if they want you to perform any of these actions. Your JSON response MUST identify the action.
+
+1. Create a news briefing:
+   - User intent: requests to create/write/generate a new broadcast/news about a topic (e.g., "Tạo bản tin về trí tuệ nhân tạo", "Tạo bản tin thời tiết Hà Nội", "Write a news draft about tech").
+   - Action JSON: {"type": "create_news", "param": "<the exact topic or subject to write about>"}
+
+2. Add last answer to the news briefing:
+   - User intent: requests to insert or add the assistant's previous/current answer, or some content, into the current briefing/script (e.g., "Thêm vào kịch bản", "Thêm vào bản tin", "Add this to news", "Chèn vào bản tin", "Lưu nội dung này vào bản tin").
+   - Action JSON: {"type": "add_to_news", "param": ""}
+
+3. Read/Summarize RSS news:
+   - User intent: requests to read, fetch, or summarize latest RSS feeds or news (e.g., "Đọc tin RSS", "Tóm tắt nguồn tin RSS", "Read RSS", "Summarize RSS").
+   - Action JSON: {"type": "read_rss", "param": ""}
+
+4. Normal conversation/general query:
+   - User intent: general conversation, greeting, asking a question, search query, explaining a concept.
+   - Action JSON: {"type": "none", "param": ""}
+
+USER PREFERENCE CONTEXT (HISTORICAL INTERESTS):
+The user has expressed strong interest in these topics based on their offline commute news reading history:
+${userPreferencesText}
+
+Proactively recommend news or direct subjects aligned with these interests if the user asks for suggestions or recommendations (e.g., "What should I read today?", "Tôi nên đọc gì hôm nay?", "Recommend news", "Give me something interesting").
+
+RESPONSE FORMAT MANDATE (STRICT JSON ONLY):
+You MUST respond with a single JSON object. Do NOT include any markdown code fences, do NOT include any prefix or suffix, do NOT write any explanation outside the JSON.
+Response Schema:
+{
+  "speechResponse": string, // Your conversational reply or explanation, kept highly natural, friendly, easy to read aloud (max 3-5 sentences).
+  "suggestedTopics": [      // Proactively suggest 1 to 3 relevant topics to read today
+    {
+      "topic": string,      // A short, specific recommended topic name (e.g. "AI", "Finance", "Electric Vehicles")
+      "reason": string      // A brief, personalized explanation of why you recommended it based on their interests
+    }
+  ],
+  "action": {
+    "type": "create_news" | "add_to_news" | "read_rss" | "none",
+    "param": string         // Parameter for the action
+  }
+}
+`;
+
+    // Map history to Google GenAI contents format
+    const contents = history.map((h: any) => ({
+      role: h.role === "assistant" || h.role === "model" ? "model" : "user",
+      parts: [{ text: h.content || h.text || "" }]
+    }));
+
+    // Append current message
+    contents.push({
+      role: "user",
+      parts: [{ text: message }]
+    });
+
+    let result: { speechResponse: string; answer: string; suggestedTopics: any[]; action: { type: string; param?: string }; sources?: Array<{ title: string; uri: string }> } | null = null;
+    let lastGeminiError: any = null;
+
+    // List of models to try in descending order
+    const candidateModels = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"];
+
+    for (const modelName of candidateModels) {
+      try {
+        console.log(`[Assistant Chat] Attempting generation with model: ${modelName}...`);
+        const response = await callGeminiWithRotation((ai) =>
+          ai.models.generateContent({
+            model: modelName,
+            contents: contents,
+            config: {
+              systemInstruction: systemPrompt,
+              tools: [{ googleSearch: {} }],
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  speechResponse: { type: Type.STRING },
+                  suggestedTopics: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        topic: { type: Type.STRING },
+                        reason: { type: Type.STRING }
+                      },
+                      required: ["topic", "reason"]
+                    }
+                  },
+                  action: {
+                    type: Type.OBJECT,
+                    properties: {
+                      type: { type: Type.STRING },
+                      param: { type: Type.STRING }
+                    },
+                    required: ["type"]
+                  }
+                },
+                required: ["speechResponse", "suggestedTopics", "action"]
+              }
+            }
+          })
+        );
+
+        const parsed = JSON.parse(response.text || '{"speechResponse": "", "suggestedTopics": [], "action": {"type": "none", "param": ""}}');
+
+        const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        const sourcesList = chunks
+          .map((c: any) => c.web)
+          .filter((w: any) => w && w.uri)
+          .map((w: any) => ({
+            title: w.title || w.uri,
+            uri: w.uri
+          }));
+
+        const uniqueSources = sourcesList.filter((src: any, idx: number, self: any[]) =>
+          self.findIndex((s) => s.uri === src.uri) === idx
+        );
+
+        result = {
+          speechResponse: parsed.speechResponse || parsed.answer || "",
+          answer: parsed.speechResponse || parsed.answer || "",
+          suggestedTopics: parsed.suggestedTopics || [],
+          action: parsed.action || { type: "none", param: "" },
+          sources: uniqueSources
+        };
+        break; // Successfully completed
+      } catch (err: any) {
+        console.warn(`[Assistant Chat] Model ${modelName} failed or was rate limited:`, err.message || err);
+        lastGeminiError = err;
+      }
+    }
+
+    // If Gemini models all failed, try Groq fallback if configured
+    if (!result) {
+      const hasGroq = !!process.env.GROQ_API_KEY;
+      if (hasGroq) {
+        try {
+          console.log("[Assistant Chat] All Gemini models rate-limited. Trying Groq fallback...");
+          const userPrompt = `History: ${JSON.stringify(history)}\nLatest Message: "${message}"`;
+          const groqResponse = await generateWithGroq(systemPrompt, userPrompt, true);
+          const parsed = JSON.parse(groqResponse || '{"speechResponse": "", "suggestedTopics": [], "action": {"type": "none", "param": ""}}');
+          result = {
+            speechResponse: parsed.speechResponse || parsed.answer || "",
+            answer: parsed.speechResponse || parsed.answer || "",
+            suggestedTopics: parsed.suggestedTopics || [],
+            action: parsed.action || { type: "none", param: "" },
+            sources: []
+          };
+        } catch (groqError: any) {
+          console.error("[Assistant Chat] Groq fallback failed as well:", groqError);
+        }
+      }
+    }
+
+    // If everything failed, use the smart local rule-based fallback
+    if (!result) {
+      console.warn("[Assistant Chat] All AI endpoints failed or rate-limited. Launching local offline/rule-based backup controller...");
+      const msgLower = message.toLowerCase();
+      
+      let localAnswer = "";
+      let localAction = { type: "none", param: "" };
+
+      // 1. Create news
+      if (msgLower.includes("tạo bản tin về") || msgLower.includes("tạo bản tin")) {
+        let topic = message.replace(/tạo bản tin về/i, "").replace(/tạo bản tin/i, "").trim();
+        if (topic.startsWith("chủ đề")) topic = topic.replace(/^chủ đề/i, "").trim();
+        localAction = { type: "create_news", param: topic || "tin tức mới nhất" };
+        localAnswer = isVi 
+          ? `Tôi đã tiếp nhận lệnh tạo bản tin của bạn! Tôi đang tiến hành soạn thảo kịch bản phát thanh thông minh về chủ đề: "${topic || "tin tức mới nhất"}".`
+          : `I have received your request! I am compiling a dynamic broadcast script on: "${topic || "latest news"}".`;
+      } else if (msgLower.includes("create news about") || msgLower.includes("create news") || msgLower.includes("write news") || msgLower.includes("write a news")) {
+        let topic = message.replace(/create news about/i, "").replace(/create news/i, "").replace(/write news about/i, "").replace(/write news/i, "").trim();
+        localAction = { type: "create_news", param: topic || "latest news" };
+        localAnswer = `I have received your request! I am compiling a dynamic broadcast script on: "${topic || "latest news"}".`;
+      }
+      // 2. Add last response to news editor
+      else if (msgLower.includes("thêm vào bản tin") || msgLower.includes("thêm vào kịch bản") || msgLower.includes("chèn vào bản tin") || msgLower.includes("lưu vào bản tin")) {
+        localAction = { type: "add_to_news", param: "" };
+        localAnswer = isVi
+          ? "Đã hiểu! Tôi sẽ chèn trực tiếp nội dung thảo luận phía trên vào kịch bản bản tin của bạn ngay lập tức."
+          : "Understood! I will append the conversational content above to your broadcast script editor.";
+      } else if (msgLower.includes("add to news") || msgLower.includes("add to script") || msgLower.includes("append to news")) {
+        localAction = { type: "add_to_news", param: "" };
+        localAnswer = "Understood! I will append the conversational content above to your broadcast script editor.";
+      }
+      // 3. Read RSS feeds
+      else if (msgLower.includes("đọc tin rss") || msgLower.includes("tóm tắt rss") || msgLower.includes("đọc rss") || msgLower.includes("tóm tắt nguồn tin rss")) {
+        localAction = { type: "read_rss", param: "" };
+        localAnswer = isVi
+          ? "Đang tiến hành kết nối, đồng bộ và tổng hợp thông tin từ các nguồn tin RSS của bạn..."
+          : "Connecting, syncing, and aggregating articles from your subscribed RSS channels...";
+      } else if (msgLower.includes("read rss") || msgLower.includes("summarize rss") || msgLower.includes("fetch rss")) {
+        localAction = { type: "read_rss", param: "" };
+        localAnswer = "Connecting, syncing, and aggregating articles from your subscribed RSS channels...";
+      }
+      // 4. Default conversation fallback explaining rate limits beautifully
+      else {
+        localAnswer = isVi
+          ? `Chào bạn! Máy chủ AI hiện đang chịu tải lượng yêu cầu rất lớn từ các khóa API miễn phí (Rate Limit). Tôi đang tự động bật chế độ Dự phòng Thông minh (Smart Fallback Mode) để duy trì hoạt động tốt nhất.
+
+Bạn hoàn toàn có thể tiếp tục ra lệnh trực tiếp bằng tiếng Việt với các cú pháp sau:
+- "Tạo bản tin về [chủ đề]" (Ví dụ: Tạo bản tin về Công nghệ xanh)
+- "Đọc tin RSS" để quét và tổng hợp tự động các luồng RSS của bạn.
+- "Thêm vào bản tin" để lưu trữ nhanh cuộc trò chuyện vào trình soạn thảo.`
+          : `Hi! The AI server is currently handling extreme traffic volumes on free API tiers (Rate Limit). I have entered Smart Fallback Mode to keep your assistant responsive.
+
+You can continue driving actions directly with these quick text triggers:
+- "Create news about [topic]" (e.g., Create news about Space Exploration)
+- "Read RSS" to aggregate and summarize your feed subscriptions.
+- "Add to news" to quickly insert my last response into your script editor.`;
+      }
+
+      result = {
+        speechResponse: localAnswer,
+        answer: localAnswer,
+        suggestedTopics: [],
+        action: localAction,
+        sources: []
+      };
+    }
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error("Assistant Chat error:", error);
     const friendlyError = parseGeminiError(error, isVi, false);
     return res.status(500).json({ error: friendlyError });
   }

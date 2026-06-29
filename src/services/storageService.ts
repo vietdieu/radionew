@@ -5,7 +5,7 @@ const STORE_NAME = "briefings_store";
 const VOICE_HISTORY_STORE = "voiceHistory";
 const RSS_FEEDS_STORE = "rssFeeds";
 const SYNC_QUEUE_STORE = "syncQueue";
-const DB_VERSION = 8; // Tăng version lên 8 để đảm bảo onupgradeneeded luôn chạy trên tất cả trình duyệt người dùng, giải quyết dứt điểm chỉ mục url_idx
+const DB_VERSION = 9; // Tăng version lên 9 để hỗ trợ Personalized Recommendation Engine & Proactive AI Assistant
 const MAX_BRIEFINGS_LIMIT = 50; // Tự động xóa bớt khi vượt quá
 const LOCAL_STORAGE_FALLBACK_KEY_VI = "commute_cast_history_vi";
 const LOCAL_STORAGE_FALLBACK_KEY_EN = "commute_cast_history_en";
@@ -62,6 +62,22 @@ export function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains("syncQueue")) {
         db.createObjectStore("syncQueue", { keyPath: "id" });
+      }
+
+      // === Personalized Recommendation Engine Stores ===
+      if (!db.objectStoreNames.contains("interactionHistory")) {
+        const store = db.createObjectStore("interactionHistory", { keyPath: "id" });
+        store.createIndex("created_at", "created_at", { unique: false });
+        store.createIndex("topic", "topic", { unique: false });
+        store.createIndex("action", "action", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("userPreferences")) {
+        const store = db.createObjectStore("userPreferences", { keyPath: "topic" });
+        store.createIndex("score", "score", { unique: false });
+        store.createIndex("topic", "topic", { unique: true });
+      }
+      if (!db.objectStoreNames.contains("appMetadata")) {
+        db.createObjectStore("appMetadata", { keyPath: "key" });
       }
     };
 

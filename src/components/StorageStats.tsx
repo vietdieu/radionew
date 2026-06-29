@@ -1,6 +1,7 @@
-import React from "react";
-import { Database, AlertTriangle, Trash2, HardDrive } from "lucide-react";
+import React, { useState } from "react";
+import { Database, AlertTriangle, Trash2, HardDrive, ShieldCheck, Play, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
+import { runRecommendationTestSuite, TestResult } from "../utils/testSuite";
 
 interface StorageStatsProps {
   usedMB: number;
@@ -12,6 +13,9 @@ interface StorageStatsProps {
 const LIMIT_MB = 50.0;
 
 export default function StorageStats({ usedMB, totalItems, onClearAll, uiLanguage = "vi" }: StorageStatsProps) {
+  const [testResults, setTestResults] = useState<TestResult[] | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+
   const percentage = Math.min(100, parseFloat(((usedMB / LIMIT_MB) * 100).toFixed(1)));
   const isCloseToLimit = usedMB >= 40.0;
   const isExceeded = usedMB >= LIMIT_MB;
@@ -25,7 +29,10 @@ export default function StorageStats({ usedMB, totalItems, onClearAll, uiLanguag
       warningExceeded: "⚠️ Cảnh báo: Bộ nhớ IndexedDB đã dùng vượt ngưỡng 50MB!",
       warningClose: "⚠️ Sắp đầy bộ nhớ: Bạn đã sử dụng hơn 80% dung lượng tối ưu (40MB/50MB).",
       advice: "Gợi ý: Hãy xóa bớt các bản tin cũ không còn nghe để tránh làm chậm hệ thống và đảm bảo dệt các kịch bản mới mượt mà.",
-      noItems: "Chưa sử dụng"
+      noItems: "Chưa sử dụng",
+      runDiag: "Chạy Thử Nghiệm Thuật Toán Gợi Ý",
+      diagProgress: "Đang kiểm tra...",
+      diagHeader: "Kết Quả Kiểm Thử (Recommendation Engine Test Suite)"
     },
     en: {
       title: "Storage & Workspace Health",
@@ -35,7 +42,10 @@ export default function StorageStats({ usedMB, totalItems, onClearAll, uiLanguag
       warningExceeded: "⚠️ Warning: IndexedDB storage usage exceeded 50MB threshold!",
       warningClose: "⚠️ Storage running low: You have used over 80% of optimal capacity (40MB/50MB).",
       advice: "Tip: Delete older or unused briefings to keep performance peak and ensure seamless audio compilation.",
-      noItems: "Empty"
+      noItems: "Empty",
+      runDiag: "Run Recommendation Engine Tests",
+      diagProgress: "Testing algs...",
+      diagHeader: "Alg Diagnostics (Recommendation Engine Test Suite)"
     }
   }[uiLanguage];
 
@@ -45,6 +55,18 @@ export default function StorageStats({ usedMB, totalItems, onClearAll, uiLanguag
     : isCloseToLimit
     ? "bg-amber-550"
     : "bg-cyan-500";
+
+  const handleRunDiagnostics = async () => {
+    try {
+      setIsTesting(true);
+      const res = await runRecommendationTestSuite();
+      setTestResults(res);
+    } catch (err) {
+      console.error("Failed to run diagnostics:", err);
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs flex flex-col gap-4 text-slate-700" id="storage-stats-container">
@@ -97,6 +119,60 @@ export default function StorageStats({ usedMB, totalItems, onClearAll, uiLanguag
           </div>
         </motion.div>
       )}
+
+      {/* Diagnostics / Test Suite Section */}
+      <div className="border-t border-slate-100 pt-3" id="diagnostic-test-suite">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+            <span>AI recommendation diagnostics</span>
+          </span>
+          <button
+            onClick={handleRunDiagnostics}
+            disabled={isTesting}
+            className="text-[10px] text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 px-2 py-1 rounded-lg border border-indigo-150 font-bold flex items-center gap-1 cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isTesting ? (
+              <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
+            ) : (
+              <Play className="w-2.5 h-2.5 text-indigo-500" />
+            )}
+            <span>{isTesting ? t.diagProgress : t.runDiag}</span>
+          </button>
+        </div>
+
+        {testResults && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 text-xs space-y-2 max-h-[160px] overflow-y-auto font-sans shadow-inner mt-2.5"
+          >
+            <span className="font-bold text-[11px] text-slate-800 block mb-1">
+              {t.diagHeader}:
+            </span>
+            <div className="space-y-1.5">
+              {testResults.map((res, idx) => (
+                <div key={idx} className="flex items-start justify-between bg-white px-2.5 py-1.5 rounded-xl border border-slate-150">
+                  <div className="flex items-center gap-2">
+                    {res.passed ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    ) : (
+                      <XCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                    )}
+                    <span className="font-medium text-[11px] text-slate-700">{res.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono text-[9px] font-semibold">
+                    <span className="text-slate-400">({res.durationMs}ms)</span>
+                    <span className={res.passed ? "text-emerald-600" : "text-rose-600"}>
+                      {res.passed ? "PASS" : "FAIL"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </div>
 
       {/* Clear Storage action if handler is provided and items exist */}
       {onClearAll && totalItems > 0 && (

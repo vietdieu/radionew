@@ -57,12 +57,14 @@ export async function addToSyncQueue(item: Omit<SyncQueueItem, "id" | "timestamp
     timestamp: Date.now()
   };
 
-  // Optimize queue: remove redundant pending saves if delete follows
+  // Tối ưu hóa hàng đợi ngay lập tức trước khi thêm: xóa bỏ hành động trùng lặp hoặc mâu thuẫn
   let filtered = queue;
   if (item.targetId) {
     if (item.action === "delete") {
+      // Nếu xóa, loại bỏ tất cả lệnh lưu trước đó của item này
       filtered = queue.filter(q => !(q.targetId === item.targetId && q.action === "save"));
     } else if (item.action === "save") {
+      // Nếu lưu mới, loại bỏ lệnh lưu cũ trùng lặp của item này
       filtered = queue.filter(q => !(q.targetId === item.targetId && q.action === "save"));
     }
   }
@@ -70,11 +72,14 @@ export async function addToSyncQueue(item: Omit<SyncQueueItem, "id" | "timestamp
   filtered.push(newItem);
   await saveSyncQueue(filtered);
   console.log(`[Sync Queue] Added item: ${item.type} (${item.action})`);
+  
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("commutecast-sync-queue-updated"));
+  }
 }
 
 export async function clearSyncQueue(): Promise<void> {
   await clearSyncQueueFromDB();
-  // Xóa key localStorage cũ để giải phóng bộ nhớ
   try {
     localStorage.removeItem('commutecast_sync_queue');
   } catch (e) {
@@ -82,19 +87,17 @@ export async function clearSyncQueue(): Promise<void> {
   }
 }
 
-// ================== SYNC UTILITIES ==================
+// ================== UTILITIES & AUDIO STORAGE STRATEGY ==================
 
 export function isOnline(): boolean {
   return typeof navigator !== "undefined" ? navigator.onLine : true;
 }
 
-// Helper to convert localized time string / timestamp string to Date
 export function parseTimestamp(ts: string | undefined): Date {
   if (!ts) return new Date(0);
   const parsed = Date.parse(ts);
   if (!isNaN(parsed)) return new Date(parsed);
   
-  // Hand-rolled parsing for "DD/MM/YYYY, HH:MM:SS" or similar
   try {
     const match = ts.match(/(\d+)\/(\d+)\/(\d+)/);
     if (match) {
@@ -106,7 +109,89 @@ export function parseTimestamp(ts: string | undefined): Date {
   return new Date(0);
 }
 
-// ================== SYNC PROCESSOR (CÓ HỖ TRỢ ABORT) ==================
+// Chuyển đổi chuỗi base64 thành Blob vật lý
+export function base64ToBlob(base64: string, contentType = "audio/mpeg"): Blob {
+  const base64Data = base64.includes(",") ? base64.split(",")[1] : base64;
+  const binaryString = window.atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: contentType });
+}
+
+/**
+ * Tải các đoạn âm thanh lên Supabase Storage độc lập và trả về Public URL
+ */
+export async function uploadAudioToSupabaseStorage(
+  briefingId: string,
+  audioChunks: string[]
+): Promise<string | null> {
+  if (!audioChunks || audioChunks.length === 0) return null;
+  
+  // Nếu đoạn âm thanh đầu tiên đã là một liên kết web, trả về luôn
+  if (audioChunks[0]?.startsWith("http")) {
+    return audioChunks[0];
+  }
+
+  const supabase = await getSupabaseClientAsync();
+  if (!supabase) return null;
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session || !session.user) return null;
+
+  const userId = session.user.id;
+
+  try {
+    // Ghép các mảnh âm thanh base64 thành một file Blob duy nhất
+    const blobs = audioChunks.map(chunk => base64ToBlob(chunk));
+    const combinedBlob = new Blob(blobs, { type: "audio/mpeg" });
+    const fileName = `${userId}/${briefingId}.mp3`;
+    const bucketName = "audio-briefings";
+
+    // Thực hiện tải lên
+    let { error } = await supabase.storage
+      .from(bucketName)
+      .upload(fileName, combinedBlob, {
+        contentType: "audio/mpeg",
+        upsert: true
+      });
+
+    if (error) {
+      // Nếu bucket chưa tồn tại, thử tạo bucket mới và upload lại
+      if (error.message?.includes("bucket") || (error as any).status === 404) {
+        console.warn(`[Storage] Bucket '${bucketName}' does not exist. Initializing...`);
+        try {
+          await supabase.storage.createBucket(bucketName, { public: true });
+          const retryRes = await supabase.storage
+            .from(bucketName)
+            .upload(fileName, combinedBlob, {
+              contentType: "audio/mpeg",
+              upsert: true
+            });
+          if (retryRes.error) throw retryRes.error;
+        } catch (createErr) {
+          console.error("[Storage] Failed to create bucket or retry upload:", createErr);
+          return null;
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    // Lấy liên kết tải xuống công khai
+    const { data: publicUrlData } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(fileName);
+
+    return publicUrlData.publicUrl;
+  } catch (err) {
+    console.error(`[Storage] Error uploading audio for briefing ${briefingId}:`, err);
+    return null;
+  }
+}
+
+// ================== BATCH SYNC PROCESSOR (CÓ HỖ TRỢ ABORT & BATCHING) ==================
 
 export async function processSyncQueueAsync(signal?: AbortSignal): Promise<boolean> {
   if (!isOnline()) {
@@ -128,93 +213,173 @@ export async function processSyncQueueAsync(signal?: AbortSignal): Promise<boole
   const queue = await getSyncQueue();
   if (queue.length === 0) return true;
 
-  console.log(`[Sync Queue] Processing ${queue.length} items from offline queue...`);
-  const failedItems: SyncQueueItem[] = [];
+  console.log(`[Sync Queue] Batching & Processing ${queue.length} queue items...`);
+
+  // --- BƯỚC 1: GOM CỤM & TỐI ƯU HÓA HOẠT ĐỘNG (CONSOLIDATION) ---
+  const briefingsToSave = new Map<string, SavedSummary>();
+  const briefingsToDelete = new Set<string>();
+  const voiceHistoryToSave = new Map<string, VoiceHistoryItem>();
+  let voiceHistoryClear = false;
+  let latestPreferences: UserPreferences | null = null;
 
   for (const item of queue) {
-    // Kiểm tra hủy
-    if (signal?.aborted) {
-      console.log("[Sync Queue] Aborted during processing.");
-      // Lưu lại các item chưa xử lý để xử lý sau
-      const remaining = queue.slice(queue.indexOf(item));
-      await saveSyncQueue([...failedItems, ...remaining]);
-      return false;
-    }
-
-    try {
-      if (item.type === "briefing") {
-        if (item.action === "save" && item.data) {
-          const b = item.data as SavedSummary;
-          const { error } = await supabase
-            .from("briefings")
-            .upsert({
-              id: b.id,
-              user_id: userId,
-              timestamp: b.timestamp,
-              preferences: b.preferences,
-              payload: b.payload,
-              audio_chunks: b.audioChunks || [],
-              like_count: b.likeCount || 0,
-              share_count: b.shareCount || 0,
-              updated_at: new Date().toISOString()
-            });
-          if (error) throw error;
-        } else if (item.action === "delete" && item.targetId) {
-          const { error } = await supabase
-            .from("briefings")
-            .delete()
-            .eq("id", item.targetId)
-            .eq("user_id", userId);
-          if (error) throw error;
-        }
-      } 
-      else if (item.type === "preferences") {
-        if (item.action === "save" && item.data) {
-          const { error } = await supabase
-            .from("user_preferences")
-            .upsert({
-              user_id: userId,
-              preferences: item.data,
-              updated_at: new Date().toISOString()
-            });
-          if (error) throw error;
-        }
-      } 
-      else if (item.type === "voice_history") {
-        if (item.action === "save" && item.data) {
-          const v = item.data as VoiceHistoryItem;
-          const { error } = await supabase
-            .from("voice_history")
-            .upsert({
-              id: v.id,
-              user_id: userId,
-              query: v.query,
-              answer: v.answer,
-              language: v.language,
-              sources: v.sources || [],
-              timestamp: v.timestamp,
-              updated_at: new Date().toISOString()
-            });
-          if (error) throw error;
-        } else if (item.action === "clear") {
-          const { error } = await supabase
-            .from("voice_history")
-            .delete()
-            .eq("user_id", userId);
-          if (error) throw error;
-        }
+    if (item.type === "briefing") {
+      if (item.action === "save" && item.data) {
+        const b = item.data as SavedSummary;
+        briefingsToSave.set(b.id, b);
+        briefingsToDelete.delete(b.id);
+      } else if (item.action === "delete" && item.targetId) {
+        briefingsToDelete.add(item.targetId);
+        briefingsToSave.delete(item.targetId);
       }
-    } catch (err) {
-      console.error(`[Sync Queue] Failed to process sync item ${item.id}:`, err);
-      failedItems.push(item);
+    } else if (item.type === "voice_history") {
+      if (item.action === "save" && item.data) {
+        const v = item.data as VoiceHistoryItem;
+        voiceHistoryToSave.set(v.id, v);
+      } else if (item.action === "clear") {
+        voiceHistoryClear = true;
+        voiceHistoryToSave.clear();
+      }
+    } else if (item.type === "preferences") {
+      if (item.action === "save" && item.data) {
+        latestPreferences = item.data as UserPreferences;
+      }
     }
   }
 
-  await saveSyncQueue(failedItems);
-  return failedItems.length === 0;
+  // --- BƯỚC 2: THỰC THI CHUYỂN ĐỔI BATCH (REDUCE REQUESTS BY > 50%) ---
+  try {
+    // 1. Xử lý lưu các bản tin (Briefings) - có upload file audio lên storage riêng
+    if (briefingsToSave.size > 0) {
+      const sortedBriefings = Array.from(briefingsToSave.values());
+      const BATCH_SIZE = 5;
+
+      for (let i = 0; i < sortedBriefings.length; i += BATCH_SIZE) {
+        if (signal?.aborted) throw new Error("AbortError");
+        
+        const batch = sortedBriefings.slice(i, i + BATCH_SIZE);
+        const rowsToUpsert = [];
+
+        for (const b of batch) {
+          if (signal?.aborted) throw new Error("AbortError");
+
+          // Tách riêng tệp âm thanh nặng, tải lên Storage để lấy link URL rút gọn
+          let audioUrl: string | null = (b as any).audioUrl || null;
+          if (!audioUrl && b.audioChunks && b.audioChunks.length > 0 && !b.audioChunks[0]?.startsWith("http")) {
+            console.log(`[Sync] Uploading heavy base64 audio for briefing: ${b.id}`);
+            audioUrl = await uploadAudioToSupabaseStorage(b.id, b.audioChunks);
+            if (audioUrl) {
+              (b as any).audioUrl = audioUrl;
+              // Đồng bộ lại tệp audioUrl xuống IndexedDB cục bộ để giữ tệp sạch
+              await saveBriefing(b);
+            }
+          }
+
+          rowsToUpsert.push({
+            id: b.id,
+            user_id: userId,
+            timestamp: b.timestamp,
+            preferences: b.preferences,
+            payload: b.payload,
+            audio_chunks: audioUrl ? [audioUrl] : [], // Chỉ lưu url nhẹ vào database
+            like_count: b.likeCount || 0,
+            share_count: b.shareCount || 0,
+            updated_at: new Date().toISOString()
+          });
+        }
+
+        // Gọi 1 request duy nhất cho cả Batch upsert
+        console.log(`[Sync] Batch upserting ${rowsToUpsert.length} briefings metadata to Cloud...`);
+        const { error } = await supabase
+          .from("briefings")
+          .upsert(rowsToUpsert, { signal } as any);
+        
+        if (error) throw error;
+      }
+    }
+
+    // 2. Xử lý xóa bản tin (Briefings)
+    if (briefingsToDelete.size > 0) {
+      if (signal?.aborted) throw new Error("AbortError");
+      const idsToDelete = Array.from(briefingsToDelete);
+      console.log(`[Sync] Batch deleting ${idsToDelete.length} briefings from Cloud...`);
+      
+      const { error } = await supabase
+        .from("briefings")
+        .delete({ signal } as any)
+        .in("id", idsToDelete)
+        .eq("user_id", userId);
+
+      if (error) throw error;
+    }
+
+    // 3. Xử lý lưu lịch sử voice (Voice History)
+    if (voiceHistoryClear) {
+      if (signal?.aborted) throw new Error("AbortError");
+      console.log("[Sync] Clearing all voice history from Cloud...");
+      const { error } = await supabase
+        .from("voice_history")
+        .delete({ signal } as any)
+        .eq("user_id", userId);
+      if (error) throw error;
+    }
+
+    if (voiceHistoryToSave.size > 0) {
+      const voiceItems = Array.from(voiceHistoryToSave.values());
+      const BATCH_SIZE = 10;
+
+      for (let i = 0; i < voiceItems.length; i += BATCH_SIZE) {
+        if (signal?.aborted) throw new Error("AbortError");
+        const batch = voiceItems.slice(i, i + BATCH_SIZE);
+        const rows = batch.map(v => ({
+          id: v.id,
+          user_id: userId,
+          query: v.query,
+          answer: v.answer,
+          language: v.language,
+          sources: v.sources || [],
+          timestamp: v.timestamp,
+          updated_at: new Date().toISOString()
+        }));
+
+        console.log(`[Sync] Batch upserting ${rows.length} voice history items to Cloud...`);
+        const { error } = await supabase
+          .from("voice_history")
+          .upsert(rows, { signal } as any);
+        if (error) throw error;
+      }
+    }
+
+    // 4. Xử lý lưu cấu hình (Preferences)
+    if (latestPreferences) {
+      if (signal?.aborted) throw new Error("AbortError");
+      console.log("[Sync] Syncing latest user preferences to Cloud...");
+      const { error } = await supabase
+        .from("user_preferences")
+        .upsert({
+          user_id: userId,
+          preferences: latestPreferences,
+          updated_at: new Date().toISOString()
+        }, { signal } as any);
+      if (error) throw error;
+    }
+
+    // Tất cả xử lý batch đã thành công, xóa sạch hàng đợi đồng bộ cục bộ
+    await clearSyncQueue();
+    console.log("[Sync Queue] Batch processing completed successfully. Queue cleared!");
+    return true;
+
+  } catch (err: any) {
+    if (err.message === "AbortError" || signal?.aborted) {
+      console.warn("[Sync Queue] Batch processing aborted.");
+      return false;
+    }
+    console.error("[Sync Queue] Batch processing error:", err);
+    return false;
+  }
 }
 
-// ================== TWO-WAY SYNCHRONIZATION (CÓ HỖ TRỢ ABORT) ==================
+// ================== TWO-WAY SYNCHRONIZATION WITH DELTA SYNC & CONFLICT RESOLUTION ==================
 
 export async function performFullSyncAsync(): Promise<boolean> {
   if (!isOnline()) {
@@ -222,13 +387,13 @@ export async function performFullSyncAsync(): Promise<boolean> {
     return false;
   }
 
-  // Nếu trình duyệt đang tổng hợp âm thanh, hoãn chạy đồng bộ đầy đủ
+  // Defer sync if synthesizer is currently creating audio
   if (typeof window !== "undefined" && (window as any).isCommuteCastGeneratingBriefing) {
     console.log("[SyncService] Audio generation is in progress. Deferring full sync.");
     return false;
   }
 
-  // Hủy đồng bộ cũ nếu có
+  // Abort previous run
   if (currentSyncAbortController) {
     currentSyncAbortController.abort();
   }
@@ -253,12 +418,16 @@ export async function performFullSyncAsync(): Promise<boolean> {
   console.log(`[Sync] Starting full two-way synchronization for User: ${userId}`);
 
   try {
-    // 0. Process pending offline queue (có hỗ trợ abort)
+    // 0. Process pending offline queue (using our efficient Batch sync mechanism)
     const queueOk = await processSyncQueueAsync(signal);
     if (signal.aborted) throw new Error('AbortError');
     if (!queueOk) {
-      console.warn("[Sync] Queue processing failed, but continuing with cloud sync.");
+      console.warn("[Sync] Batch queue processing failed or was empty, continuing with cloud download.");
     }
+
+    // Lấy mốc thời gian đồng bộ cuối cùng của thiết bị này (Delta Sync)
+    const lastSyncAt = localStorage.getItem("commutecast_last_sync_at") || null;
+    const currentSyncTime = new Date().toISOString();
 
     // 1. Sync UserPreferences
     if (signal.aborted) throw new Error('AbortError');
@@ -275,9 +444,20 @@ export async function performFullSyncAsync(): Promise<boolean> {
     const localPref = localPrefStr ? JSON.parse(localPrefStr) : null;
 
     if (localPref && prefData) {
-      localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
+      // Last-Write-Wins (LWW)
+      const cloudUpdated = prefData.updated_at ? new Date(prefData.updated_at) : new Date(0);
+      const localUpdated = lastSyncAt ? new Date(lastSyncAt) : new Date(0);
+      
+      if (cloudUpdated.getTime() > localUpdated.getTime()) {
+        localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
+      } else {
+        await supabase.from("user_preferences").upsert({
+          user_id: userId,
+          preferences: localPref,
+          updated_at: new Date().toISOString()
+        }, { signal } as any);
+      }
     } else if (localPref && !prefData) {
-      if (signal.aborted) throw new Error('AbortError');
       await supabase.from("user_preferences").upsert({
         user_id: userId,
         preferences: localPref,
@@ -287,12 +467,15 @@ export async function performFullSyncAsync(): Promise<boolean> {
       localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
     }
 
-    // 2. Sync VoiceHistory
+    // 2. Sync VoiceHistory (Delta Sync)
     if (signal.aborted) throw new Error('AbortError');
-    const { data: cloudVoice, error: voiceErr } = await supabase
-      .from("voice_history")
-      .select("*", { signal } as any)
-      .eq("user_id", userId);
+    let voiceQuery = supabase.from("voice_history").select("*", { signal } as any).eq("user_id", userId);
+    
+    // Áp dụng Delta Sync: chỉ tải các bản ghi thay đổi từ sau mốc lastSyncAt
+    if (lastSyncAt) {
+      voiceQuery = voiceQuery.gt("updated_at", lastSyncAt);
+    }
+    const { data: cloudVoice, error: voiceErr } = await voiceQuery;
 
     if (signal.aborted) throw new Error('AbortError');
     if (voiceErr) console.warn("[Sync] Error loading cloud voice history:", voiceErr);
@@ -315,6 +498,7 @@ export async function performFullSyncAsync(): Promise<boolean> {
         }
       }
     }
+    
     // Upload local-only voice items
     if (localVoice.length > 0) {
       for (const item of localVoice) {
@@ -335,12 +519,15 @@ export async function performFullSyncAsync(): Promise<boolean> {
       }
     }
 
-    // 3. Sync Briefings (Two-Way Conflict Resolution)
+    // 3. Sync Briefings (Two-Way Delta Sync với Conflict Resolution LWW)
     if (signal.aborted) throw new Error('AbortError');
-    const { data: cloudBriefings, error: briefErr } = await supabase
-      .from("briefings")
-      .select("*", { signal } as any)
-      .eq("user_id", userId);
+    let briefingsQuery = supabase.from("briefings").select("*", { signal } as any).eq("user_id", userId);
+    
+    // Áp dụng Delta Sync cho Briefings
+    if (lastSyncAt) {
+      briefingsQuery = briefingsQuery.gt("updated_at", lastSyncAt);
+    }
+    const { data: cloudBriefings, error: briefErr } = await briefingsQuery;
 
     if (signal.aborted) throw new Error('AbortError');
     if (briefErr) throw briefErr;
@@ -355,19 +542,22 @@ export async function performFullSyncAsync(): Promise<boolean> {
     const localBriefingsMap = new Map<string, SavedSummary>();
     localBriefings.forEach(lb => localBriefingsMap.set(lb.id, lb));
 
-    // A. Sync from Cloud to Local
+    // A. Xử lý đồng bộ từ Cloud về Local
     for (const [id, cb] of cloudBriefingsMap.entries()) {
       if (signal.aborted) throw new Error('AbortError');
       const lb = localBriefingsMap.get(id);
 
+      // Link âm thanh trực tuyến
+      const cloudAudioChunks = cb.audio_chunks || [];
+
       if (!lb) {
-        console.log(`[Sync] Downloading briefing ${id} from cloud...`);
+        console.log(`[Sync] Downloading new briefing ${id} from cloud...`);
         await saveBriefing({
           id: cb.id,
           timestamp: cb.timestamp,
           preferences: cb.preferences,
           payload: cb.payload,
-          audioChunks: cb.audio_chunks || [],
+          audioChunks: cloudAudioChunks, // Lưu link URL cloud tải xuống
           likeCount: cb.like_count || 0,
           shareCount: cb.share_count || 0
         });
@@ -375,19 +565,37 @@ export async function performFullSyncAsync(): Promise<boolean> {
         const cbDate = cb.updated_at ? new Date(cb.updated_at) : parseTimestamp(cb.timestamp);
         const lbDate = parseTimestamp(lb.timestamp);
 
+        // Conflict Resolution: Last-Write-Wins (LWW)
         if (cbDate.getTime() > lbDate.getTime()) {
-          console.log(`[Sync] Cloud has newer version of briefing ${id}. Overwriting local...`);
+          console.log(`[Sync] Cloud has newer version of briefing ${id} (LWW). Overwriting local...`);
+          
+          // Giữ lại file audio base64 ở local nếu có và không bị thay đổi
+          const localAudio = lb.audioChunks && lb.audioChunks.length > 0 && !lb.audioChunks[0]?.startsWith("http") 
+            ? lb.audioChunks 
+            : cloudAudioChunks;
+
           await saveBriefing({
             id: cb.id,
             timestamp: cb.timestamp,
             preferences: cb.preferences,
             payload: cb.payload,
-            audioChunks: cb.audio_chunks || [],
+            audioChunks: localAudio,
             likeCount: cb.like_count || 0,
             shareCount: cb.share_count || 0
           });
         } else if (lbDate.getTime() > cbDate.getTime()) {
-          console.log(`[Sync] Local has newer version of briefing ${id}. Overwriting cloud...`);
+          console.log(`[Sync] Local has newer version of briefing ${id} (LWW). Overwriting cloud...`);
+          
+          // Chuẩn bị tải âm thanh cục bộ lên Cloud
+          let finalAudioUrl = (lb as any).audioUrl || null;
+          if (!finalAudioUrl && lb.audioChunks && lb.audioChunks.length > 0 && !lb.audioChunks[0]?.startsWith("http")) {
+            finalAudioUrl = await uploadAudioToSupabaseStorage(lb.id, lb.audioChunks);
+            if (finalAudioUrl) {
+              (lb as any).audioUrl = finalAudioUrl;
+              await saveBriefing(lb);
+            }
+          }
+
           if (signal.aborted) throw new Error('AbortError');
           await supabase.from("briefings").upsert({
             id: lb.id,
@@ -395,7 +603,7 @@ export async function performFullSyncAsync(): Promise<boolean> {
             timestamp: lb.timestamp,
             preferences: lb.preferences,
             payload: lb.payload,
-            audio_chunks: lb.audioChunks || [],
+            audio_chunks: finalAudioUrl ? [finalAudioUrl] : [],
             like_count: lb.likeCount || 0,
             share_count: lb.shareCount || 0,
             updated_at: new Date().toISOString()
@@ -404,248 +612,107 @@ export async function performFullSyncAsync(): Promise<boolean> {
       }
     }
 
-    // B. Sync from Local to Cloud
+    // B. Xử lý đồng bộ từ Local lên Cloud (chỉ những mục local-only và không có trên cloud)
     for (const [id, lb] of localBriefingsMap.entries()) {
       if (signal.aborted) throw new Error('AbortError');
+      
+      // Nếu không có mốc lastSyncAt hoặc mục này chưa từng được lưu lên cloud
       if (!cloudBriefingsMap.has(id)) {
-        console.log(`[Sync] Uploading local briefing ${id} to cloud...`);
-        if (signal.aborted) throw new Error('AbortError');
-        await supabase.from("briefings").upsert({
-          id: lb.id,
-          user_id: userId,
-          timestamp: lb.timestamp,
-          preferences: lb.preferences,
-          payload: lb.payload,
-          audio_chunks: lb.audioChunks || [],
-          like_count: lb.likeCount || 0,
-          share_count: lb.shareCount || 0,
-          updated_at: new Date().toISOString()
-        }, { signal } as any);
+        // Kiểm tra xem đã tồn tại thực sự trên cloud chưa bằng một query nhẹ
+        const { data: remoteExists } = await supabase
+          .from("briefings")
+          .select("id")
+          .eq("id", id)
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (!remoteExists) {
+          console.log(`[Sync] Uploading local-only briefing ${id} to cloud...`);
+          
+          let finalAudioUrl = (lb as any).audioUrl || null;
+          if (!finalAudioUrl && lb.audioChunks && lb.audioChunks.length > 0 && !lb.audioChunks[0]?.startsWith("http")) {
+            finalAudioUrl = await uploadAudioToSupabaseStorage(lb.id, lb.audioChunks);
+            if (finalAudioUrl) {
+              (lb as any).audioUrl = finalAudioUrl;
+              await saveBriefing(lb);
+            }
+          }
+
+          if (signal.aborted) throw new Error('AbortError');
+          await supabase.from("briefings").upsert({
+            id: lb.id,
+            user_id: userId,
+            timestamp: lb.timestamp,
+            preferences: lb.preferences,
+            payload: lb.payload,
+            audio_chunks: finalAudioUrl ? [finalAudioUrl] : [],
+            like_count: lb.likeCount || 0,
+            share_count: lb.shareCount || 0,
+            updated_at: new Date().toISOString()
+          }, { signal } as any);
+        }
       }
     }
 
-    // Hoàn thành thành công
+    // Ghi lại thời điểm đồng bộ thành công của thiết bị này
+    localStorage.setItem("commutecast_last_sync_at", currentSyncTime);
     currentSyncAbortController = null;
-    console.log("[Sync] Full cloud-local synchronization completed successfully.");
+    console.log("[Sync] Full cloud-local synchronization completed successfully!");
     return true;
 
   } catch (err: any) {
     if (err.message === 'AbortError') {
       console.warn("[Sync] Synchronization aborted by user.");
-      // Không coi là lỗi, trả về false
       return false;
     }
     console.error("[Sync] Error performing full synchronization:", err);
-    if (err && (err.code === "42P01" || (err.message && err.message.includes("relation") && err.message.includes("does not exist")))) {
-      console.warn(
-        "⚠️ [Supabase DB Sync] LỖI: Bảng dữ liệu không tồn tại trong cơ sở dữ liệu Supabase của bạn.\n" +
-        "Vui lòng copy và chạy đoạn lệnh sau trong Supabase SQL Editor:\n\n" +
-        "CREATE TABLE IF NOT EXISTS user_preferences (\n" +
-        "  user_id uuid references auth.users not null primary key,\n" +
-        "  preferences jsonb not null default '{}'::jsonb,\n" +
-        "  updated_at timestamp with time zone default timezone('utc'::text, now()) not null\n" +
-        ");\n\n" +
-        "CREATE TABLE IF NOT EXISTS voice_history (\n" +
-        "  id text primary key,\n" +
-        "  user_id uuid references auth.users not null,\n" +
-        "  query text not null,\n" +
-        "  answer text not null,\n" +
-        "  language text not null,\n" +
-        "  sources jsonb default '[]'::jsonb,\n" +
-        "  timestamp text not null,\n" +
-        "  updated_at timestamp with time zone default timezone('utc'::text, now()) not null\n" +
-        ");\n\n" +
-        "CREATE TABLE IF NOT EXISTS briefings (\n" +
-        "  id text primary key,\n" +
-        "  user_id uuid references auth.users not null,\n" +
-        "  timestamp text not null,\n" +
-        "  preferences jsonb not null,\n" +
-        "  payload jsonb not null,\n" +
-        "  audio_chunks text[] default '{}'::text[],\n" +
-        "  like_count integer default 0,\n" +
-        "  share_count integer default 0,\n" +
-        "  updated_at timestamp with time zone default timezone('utc'::text, now()) not null\n" +
-        ");\n\n" +
-        "ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;\n" +
-        "ALTER TABLE voice_history ENABLE ROW LEVEL SECURITY;\n" +
-        "ALTER TABLE briefings ENABLE ROW LEVEL SECURITY;\n\n" +
-        "DROP POLICY IF EXISTS \"Users can manage their own preferences\" ON user_preferences;\n" +
-        "CREATE POLICY \"Users can manage their own preferences\" ON user_preferences FOR ALL USING (auth.uid() = user_id);\n\n" +
-        "DROP POLICY IF EXISTS \"Users can manage their own voice history\" ON voice_history;\n" +
-        "CREATE POLICY \"Users can manage their own voice history\" ON voice_history FOR ALL USING (auth.uid() = user_id);\n\n" +
-        "DROP POLICY IF EXISTS \"Users can manage their own briefings\" ON briefings;\n" +
-        "CREATE POLICY \"Users can manage their own briefings\" ON briefings FOR ALL USING (auth.uid() = user_id);\n"
-      );
-    }
     return false;
   } finally {
-    // Nếu controller vẫn là controller hiện tại, giải phóng
     if (currentSyncAbortController === controller) {
       currentSyncAbortController = null;
     }
   }
 }
 
-// ================== INDIVIDUAL SYNC HELPERS ==================
+// ================== INDIVIDUAL SYNC HELPERS (GRADUALLY REDIRECTED TO QUEUE DEBOUNCE) ==================
 
 export async function syncSaveBriefingAsync(briefing: SavedSummary): Promise<void> {
-  // Always save locally first
+  // Luôn luôn lưu cục bộ trước
   await saveBriefing(briefing);
 
-  const supabase = await getSupabaseClientAsync();
-  if (!isOnline() || !supabase) {
-    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
-    return;
-  }
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) {
-    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
-    return;
-  }
-
-  try {
-    const { error } = await supabase.from("briefings").upsert({
-      id: briefing.id,
-      user_id: session.user.id,
-      timestamp: briefing.timestamp,
-      preferences: briefing.preferences,
-      payload: briefing.payload,
-      audio_chunks: briefing.audioChunks || [],
-      like_count: briefing.likeCount || 0,
-      share_count: briefing.shareCount || 0,
-      updated_at: new Date().toISOString()
-    });
-    if (error) throw error;
-    console.log(`[Sync] Uploaded briefing ${briefing.id} directly to cloud.`);
-  } catch (err) {
-    console.warn(`[Sync] Failed to upload briefing ${briefing.id} directly. Queuing...`, err);
-    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
-  }
+  // Thêm vào hàng đợi đồng bộ. Hệ thống useSync sẽ tự động debounce 3-5 giây và chạy batch sync cực kỳ mượt mà!
+  await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
 }
 
 export async function syncDeleteBriefingAsync(id: string): Promise<void> {
-  // Always delete locally first
+  // Luôn luôn xóa cục bộ trước
   await deleteBriefing(id);
 
-  const supabase = await getSupabaseClientAsync();
-  if (!isOnline() || !supabase) {
-    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
-    return;
-  }
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) {
-    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
-    return;
-  }
-
-  try {
-    const { error } = await supabase
-      .from("briefings")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", session.user.id);
-    if (error) throw error;
-    console.log(`[Sync] Deleted briefing ${id} directly from cloud.`);
-  } catch (err) {
-    console.warn(`[Sync] Failed to delete briefing ${id} directly. Queuing...`, err);
-    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
-  }
+  // Thêm vào hàng đợi đồng bộ
+  await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
 }
 
 export async function syncSavePreferencesAsync(preferences: UserPreferences): Promise<void> {
-  // Save locally
+  // Lưu cục bộ trước
   localStorage.setItem("commutecast_user_preferences", JSON.stringify(preferences));
 
-  const supabase = await getSupabaseClientAsync();
-  if (!isOnline() || !supabase) {
-    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
-    return;
-  }
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) {
-    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
-    return;
-  }
-
-  try {
-    const { error } = await supabase.from("user_preferences").upsert({
-      user_id: session.user.id,
-      preferences,
-      updated_at: new Date().toISOString()
-    });
-    if (error) throw error;
-    console.log(`[Sync] Uploaded user preferences to cloud.`);
-  } catch (err) {
-    console.warn(`[Sync] Failed to upload preferences. Queuing...`, err);
-    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
-  }
+  // Thêm vào hàng đợi đồng bộ
+  await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
 }
 
 export async function syncSaveVoiceHistoryAsync(item: Partial<VoiceHistoryItem>): Promise<VoiceHistoryItem> {
-  // Save locally first
+  // Lưu cục bộ trước
   const saved = await saveVoiceHistory(item);
 
-  const supabase = await getSupabaseClientAsync();
-  if (!isOnline() || !supabase) {
-    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
-    return saved;
-  }
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) {
-    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
-    return saved;
-  }
-
-  try {
-    const { error } = await supabase.from("voice_history").upsert({
-      id: saved.id,
-      user_id: session.user.id,
-      query: saved.query,
-      answer: saved.answer,
-      language: saved.language,
-      sources: saved.sources || [],
-      timestamp: saved.timestamp,
-      updated_at: new Date().toISOString()
-    });
-    if (error) throw error;
-    console.log(`[Sync] Uploaded voice history item ${saved.id} directly to cloud.`);
-  } catch (err) {
-    console.warn(`[Sync] Failed to upload voice item. Queuing...`, err);
-    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
-  }
-
+  // Thêm vào hàng đợi đồng bộ
+  await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
   return saved;
 }
 
 export async function syncClearVoiceHistoryAsync(): Promise<void> {
-  // Clear locally
+  // Xóa cục bộ trước
   await clearVoiceHistory();
 
-  const supabase = await getSupabaseClientAsync();
-  if (!isOnline() || !supabase) {
-    await addToSyncQueue({ type: "voice_history", action: "clear" });
-    return;
-  }
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) {
-    await addToSyncQueue({ type: "voice_history", action: "clear" });
-    return;
-  }
-
-  try {
-    const { error } = await supabase
-      .from("voice_history")
-      .delete()
-      .eq("user_id", session.user.id);
-    if (error) throw error;
-    console.log(`[Sync] Cleared voice history directly from cloud.`);
-  } catch (err) {
-    console.warn(`[Sync] Failed to clear voice history. Queuing...`, err);
-    await addToSyncQueue({ type: "voice_history", action: "clear" });
-  }
+  // Thêm vào hàng đợi đồng bộ
+  await addToSyncQueue({ type: "voice_history", action: "clear" });
 }
