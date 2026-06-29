@@ -1223,6 +1223,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               syncStatus={syncStatus}
               isOnline={syncOnline}
               onSync={triggerSync}
+              onAbortSync={abortSync}   // <-- Truyền hàm hủy
               uiLanguage={uiLanguage}
             />
 
