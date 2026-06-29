@@ -17,6 +17,19 @@ import { UserPreferences } from "../components/UserPreferencesProvider";
 // Sử dụng lại kiểu từ storageService để đồng bộ
 export type SyncQueueItem = StorageSyncQueueItem;
 
+// ===== BIẾN QUẢN LÝ ABORT =====
+let currentSyncAbortController: AbortController | null = null;
+
+// ===== HÀM HỦY ĐỒNG BỘ =====
+export function abortSync(): boolean {
+  if (currentSyncAbortController) {
+    currentSyncAbortController.abort();
+    console.log("[Sync] Abort signal sent.");
+    return true;
+  }
+  return false;
+}
+
 // ================== OFFLINE QUEUE MANAGEMENT ==================
 
 export async function getSyncQueue(): Promise<SyncQueueItem[]> {
@@ -93,10 +106,17 @@ export function parseTimestamp(ts: string | undefined): Date {
   return new Date(0);
 }
 
-// ================== SYNC PROCESSOR ==================
+// ================== SYNC PROCESSOR (CÓ HỖ TRỢ ABORT) ==================
 
-export async function processSyncQueueAsync(): Promise<boolean> {
-  if (!isOnline()) return false;
+export async function processSyncQueueAsync(signal?: AbortSignal): Promise<boolean> {
+  if (!isOnline()) {
+    console.warn("[Sync Queue] Offline, cannot process.");
+    return false;
+  }
+  if (signal?.aborted) {
+    console.warn("[Sync Queue] Aborted before processing.");
+    return false;
+  }
 
   const supabase = await getSupabaseClientAsync();
   if (!supabase) return false;
@@ -112,6 +132,15 @@ export async function processSyncQueueAsync(): Promise<boolean> {
   const failedItems: SyncQueueItem[] = [];
 
   for (const item of queue) {
+    // Kiểm tra hủy
+    if (signal?.aborted) {
+      console.log("[Sync Queue] Aborted during processing.");
+      // Lưu lại các item chưa xử lý để xử lý sau
+      const remaining = queue.slice(queue.indexOf(item));
+      await saveSyncQueue([...failedItems, ...remaining]);
+      return false;
+    }
+
     try {
       if (item.type === "briefing") {
         if (item.action === "save" && item.data) {
@@ -185,71 +214,94 @@ export async function processSyncQueueAsync(): Promise<boolean> {
   return failedItems.length === 0;
 }
 
-// ================== TWO-WAY SYNCHRONIZATION ==================
+// ================== TWO-WAY SYNCHRONIZATION (CÓ HỖ TRỢ ABORT) ==================
 
 export async function performFullSyncAsync(): Promise<boolean> {
-  if (!isOnline()) return false;
+  if (!isOnline()) {
+    console.warn("[Sync] Offline, cannot sync.");
+    return false;
+  }
 
-  // Nếu trình duyệt đang tổng hợp âm thanh, hoãn chạy đồng bộ đầy đủ để tránh xung đột băng thông & CPU
+  // Nếu trình duyệt đang tổng hợp âm thanh, hoãn chạy đồng bộ đầy đủ
   if (typeof window !== "undefined" && (window as any).isCommuteCastGeneratingBriefing) {
     console.log("[SyncService] Audio generation is in progress. Deferring full sync.");
     return false;
   }
 
+  // Hủy đồng bộ cũ nếu có
+  if (currentSyncAbortController) {
+    currentSyncAbortController.abort();
+  }
+
+  const controller = new AbortController();
+  currentSyncAbortController = controller;
+  const signal = controller.signal;
+
   const supabase = await getSupabaseClientAsync();
-  if (!supabase) return false;
+  if (!supabase) {
+    currentSyncAbortController = null;
+    return false;
+  }
 
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) return false;
+  if (!session || !session.user) {
+    currentSyncAbortController = null;
+    return false;
+  }
 
   const userId = session.user.id;
   console.log(`[Sync] Starting full two-way synchronization for User: ${userId}`);
 
   try {
-    // 0. Process any pending offline mutations first
-    await processSyncQueueAsync();
+    // 0. Process pending offline queue (có hỗ trợ abort)
+    const queueOk = await processSyncQueueAsync(signal);
+    if (signal.aborted) throw new Error('AbortError');
+    if (!queueOk) {
+      console.warn("[Sync] Queue processing failed, but continuing with cloud sync.");
+    }
 
     // 1. Sync UserPreferences
+    if (signal.aborted) throw new Error('AbortError');
     const { data: prefData, error: prefErr } = await supabase
       .from("user_preferences")
-      .select("preferences, updated_at")
+      .select("preferences, updated_at", { signal })
       .eq("user_id", userId)
       .maybeSingle();
 
+    if (signal.aborted) throw new Error('AbortError');
     if (prefErr) console.warn("[Sync] Error loading cloud user preferences:", prefErr);
 
     const localPrefStr = localStorage.getItem("commutecast_user_preferences");
     const localPref = localPrefStr ? JSON.parse(localPrefStr) : null;
 
     if (localPref && prefData) {
-      // Both exist - keep latest or local by default
-      // If user wants to sync cloud preference down, we can update local storage
       localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
     } else if (localPref && !prefData) {
-      // Local exists, cloud doesn't - upload
+      if (signal.aborted) throw new Error('AbortError');
       await supabase.from("user_preferences").upsert({
         user_id: userId,
         preferences: localPref,
         updated_at: new Date().toISOString()
-      });
+      }, { signal });
     } else if (!localPref && prefData) {
-      // Cloud exists, local doesn't - download
       localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
     }
 
     // 2. Sync VoiceHistory
+    if (signal.aborted) throw new Error('AbortError');
     const { data: cloudVoice, error: voiceErr } = await supabase
       .from("voice_history")
-      .select("*")
+      .select("*", { signal })
       .eq("user_id", userId);
 
+    if (signal.aborted) throw new Error('AbortError');
     if (voiceErr) console.warn("[Sync] Error loading cloud voice history:", voiceErr);
 
     const localVoice = await getVoiceHistory();
 
     if (cloudVoice && cloudVoice.length > 0) {
-      // Simple merge: insert missing into local and upload missing to cloud
       for (const item of cloudVoice) {
+        if (signal.aborted) throw new Error('AbortError');
         const existsLocally = localVoice.some(lv => lv.id === item.id);
         if (!existsLocally) {
           await saveVoiceHistory({
@@ -263,9 +315,10 @@ export async function performFullSyncAsync(): Promise<boolean> {
         }
       }
     }
-    // Upload local-only voice items to cloud
+    // Upload local-only voice items
     if (localVoice.length > 0) {
       for (const item of localVoice) {
+        if (signal.aborted) throw new Error('AbortError');
         const existsOnCloud = cloudVoice?.some(cv => cv.id === item.id);
         if (!existsOnCloud) {
           await supabase.from("voice_history").upsert({
@@ -277,17 +330,19 @@ export async function performFullSyncAsync(): Promise<boolean> {
             sources: item.sources || [],
             timestamp: item.timestamp,
             updated_at: new Date().toISOString()
-          });
+          }, { signal });
         }
       }
     }
 
     // 3. Sync Briefings (Two-Way Conflict Resolution)
+    if (signal.aborted) throw new Error('AbortError');
     const { data: cloudBriefings, error: briefErr } = await supabase
       .from("briefings")
-      .select("*")
+      .select("*", { signal })
       .eq("user_id", userId);
 
+    if (signal.aborted) throw new Error('AbortError');
     if (briefErr) throw briefErr;
 
     const localBriefings = await getAllBriefings(true);
@@ -300,12 +355,12 @@ export async function performFullSyncAsync(): Promise<boolean> {
     const localBriefingsMap = new Map<string, SavedSummary>();
     localBriefings.forEach(lb => localBriefingsMap.set(lb.id, lb));
 
-    // A. Sync from Cloud to Local and handle conflicts
+    // A. Sync from Cloud to Local
     for (const [id, cb] of cloudBriefingsMap.entries()) {
+      if (signal.aborted) throw new Error('AbortError');
       const lb = localBriefingsMap.get(id);
 
       if (!lb) {
-        // Cloud exists, Local doesn't - download
         console.log(`[Sync] Downloading briefing ${id} from cloud...`);
         await saveBriefing({
           id: cb.id,
@@ -317,12 +372,10 @@ export async function performFullSyncAsync(): Promise<boolean> {
           shareCount: cb.share_count || 0
         });
       } else {
-        // Both exist - conflict resolution by updated_at or timestamp
         const cbDate = cb.updated_at ? new Date(cb.updated_at) : parseTimestamp(cb.timestamp);
         const lbDate = parseTimestamp(lb.timestamp);
 
         if (cbDate.getTime() > lbDate.getTime()) {
-          // Cloud is newer - overwrite local
           console.log(`[Sync] Cloud has newer version of briefing ${id}. Overwriting local...`);
           await saveBriefing({
             id: cb.id,
@@ -334,8 +387,8 @@ export async function performFullSyncAsync(): Promise<boolean> {
             shareCount: cb.share_count || 0
           });
         } else if (lbDate.getTime() > cbDate.getTime()) {
-          // Local is newer - overwrite cloud
           console.log(`[Sync] Local has newer version of briefing ${id}. Overwriting cloud...`);
+          if (signal.aborted) throw new Error('AbortError');
           await supabase.from("briefings").upsert({
             id: lb.id,
             user_id: userId,
@@ -346,15 +399,17 @@ export async function performFullSyncAsync(): Promise<boolean> {
             like_count: lb.likeCount || 0,
             share_count: lb.shareCount || 0,
             updated_at: new Date().toISOString()
-          });
+          }, { signal });
         }
       }
     }
 
-    // B. Sync from Local to Cloud (Local items that don't exist on cloud)
+    // B. Sync from Local to Cloud
     for (const [id, lb] of localBriefingsMap.entries()) {
+      if (signal.aborted) throw new Error('AbortError');
       if (!cloudBriefingsMap.has(id)) {
         console.log(`[Sync] Uploading local briefing ${id} to cloud...`);
+        if (signal.aborted) throw new Error('AbortError');
         await supabase.from("briefings").upsert({
           id: lb.id,
           user_id: userId,
@@ -365,13 +420,21 @@ export async function performFullSyncAsync(): Promise<boolean> {
           like_count: lb.likeCount || 0,
           share_count: lb.shareCount || 0,
           updated_at: new Date().toISOString()
-        });
+        }, { signal });
       }
     }
 
+    // Hoàn thành thành công
+    currentSyncAbortController = null;
     console.log("[Sync] Full cloud-local synchronization completed successfully.");
     return true;
+
   } catch (err: any) {
+    if (err.message === 'AbortError') {
+      console.warn("[Sync] Synchronization aborted by user.");
+      // Không coi là lỗi, trả về false
+      return false;
+    }
     console.error("[Sync] Error performing full synchronization:", err);
     if (err && (err.code === "42P01" || (err.message && err.message.includes("relation") && err.message.includes("does not exist")))) {
       console.warn(
@@ -415,6 +478,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
       );
     }
     return false;
+  } finally {
+    // Nếu controller vẫn là controller hiện tại, giải phóng
+    if (currentSyncAbortController === controller) {
+      currentSyncAbortController = null;
+    }
   }
 }
 
