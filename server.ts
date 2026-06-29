@@ -899,33 +899,17 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     const now = Date.now();
     
     // Xác định engine ưu tiên dựa trên ngôn ngữ và trạng thái
-    let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
-    
+    let activeEngine: "gemini" | "edge" | "translate";
+
     if (isVi) {
-      // Tiếng Việt: ưu tiên Edge → Translate → GCloud (nếu edge fail)
-      if (now < globalEdgeTtsDisabledUntil) {
-        if (now < globalGCloudTtsDisabledUntil) {
-          activeEngine = "translate";
-        } else {
-          activeEngine = "gcloud";
-        }
-      } else {
-        activeEngine = "edge";
-      }
+    // TIẾNG VIỆT: Chỉ dùng Translate (nhanh, ổn định)
+      activeEngine = "translate";
     } else {
-      // Tiếng Anh: ưu tiên Gemini → Edge → Translate → GCloud
+      // TIẾNG ANH: Ưu tiên Gemini (nếu có quota), nếu không thì Translate
       if (now < globalGeminiTtsDisabledUntil) {
-        if (now < globalEdgeTtsDisabledUntil) {
-          if (now < globalGCloudTtsDisabledUntil) {
-            activeEngine = "translate";
-          } else {
-            activeEngine = "gcloud";
-          }
-        } else {
-          activeEngine = "gemini";
-        }
+        activeEngine = "translate"; // Gemini đang bị disable, dùng Translate
       } else {
-        activeEngine = "edge";
+        activeEngine = "gemini";   // Gemini khả dụng, dùng Gemini (chất lượng tốt hơn)
       }
     }
     console.log(`[TTS-DEBUG] Selected initial engine: ${activeEngine}`);
@@ -997,7 +981,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
               case "translate":
                 base64Audio = await withTimeout(
                   callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN"),
-                  3000
+                  2000
                 );
                 break;
             }
