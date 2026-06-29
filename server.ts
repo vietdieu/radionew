@@ -1,3 +1,4 @@
+process.env.TZ = 'Asia/Ho_Chi_Minh';
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
@@ -27,12 +28,16 @@ app.get("/health", (req, res) => {
 });
 
 let currentKeyIndex = 0;
+const keyCooldownMap = new Map<string, number>();
+const COOLDOWN_DURATION = 60 * 1000; // 60 giây
 
-// Global timestamps để temporarily disable failing TTS engines
 let globalGeminiTtsDisabledUntil = 0;
 let globalEdgeTtsDisabledUntil = 0;
 let globalGCloudTtsDisabledUntil = 0;
 let lastSuccessfulEngine: string | null = null;
+
+// ===== THÊM CƠ CHẾ LƯU TRẠNG THÁI FAIL TRONG REQUEST =====
+const engineFailInRequest = new Set<string>();
 
 function getKeysList(): string[] {
   const keys: string[] = [];
@@ -68,12 +73,20 @@ async function callGeminiWithRotation<T>(
     throw new Error("No GEMINI_API_KEY is configured. Please set at least GEMINI_API_KEY in Settings -> Secrets.");
   }
 
-  let attempts = 0;
   let lastError: any = null;
+  const maxAttempts = keys.length * 2;
 
-  while (attempts < keys.length) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const keyIndex = currentKeyIndex % keys.length;
     const currentKey = keys[keyIndex];
+    const now = Date.now();
+
+    const cooldownExpiry = keyCooldownMap.get(currentKey) || 0;
+    if (now < cooldownExpiry) {
+      console.log(`[Gemini Rotation] Key #${keyIndex + 1} on cooldown until ${new Date(cooldownExpiry).toISOString()}. Skipping.`);
+      currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+      continue;
+    }
 
     const ai = new GoogleGenAI({
       apiKey: currentKey,
@@ -83,6 +96,7 @@ async function callGeminiWithRotation<T>(
     try {
       console.log(`[Gemini Rotation] Attempting call using Key Index #${keyIndex + 1} of ${keys.length} (ending ...${currentKey.slice(-4)})`);
       const result = await apiCall(ai);
+      keyCooldownMap.delete(currentKey);
       return result;
     } catch (error: any) {
       lastError = error;
@@ -91,19 +105,46 @@ async function callGeminiWithRotation<T>(
         errMsg.includes("resource_exhausted") ||
         errMsg.includes("quota") ||
         errMsg.includes("limit") ||
-        errMsg.includes("429");
+        errMsg.includes("429") ||
+        errMsg.includes("rate limit");
 
       if (isQuotaLimit && keys.length > 1) {
-        console.warn(`[Gemini Rotation] Key Index #${keyIndex + 1} hit quota. Falling back to next key...`);
+        const expiry = Date.now() + COOLDOWN_DURATION;
+        keyCooldownMap.set(currentKey, expiry);
+        console.warn(`[Gemini Rotation] Key #${keyIndex + 1} hit quota. Cooling down for ${COOLDOWN_DURATION/1000}s until ${new Date(expiry).toISOString()}`);
         currentKeyIndex = (currentKeyIndex + 1) % keys.length;
-        attempts++;
+        continue;
+      } else if (
+        errMsg.includes("api_key_invalid") ||
+        errMsg.includes("api key not valid") ||
+        errMsg.includes("invalid api key") ||
+        errMsg.includes("key is invalid")
+      ) {
+        const expiry = Date.now() + 3600 * 1000;
+        keyCooldownMap.set(currentKey, expiry);
+        console.error(`[Gemini Rotation] Key #${keyIndex + 1} is invalid. Cooling down for 1 hour.`);
+        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+        continue;
       } else {
         throw error;
       }
     }
   }
 
-  throw lastError || new Error("All configured GEMINI_API_KEY entries returned quota limits.");
+  if (lastError) {
+    const errMsg = (lastError.message || "").toLowerCase();
+    if (
+      errMsg.includes("resource_exhausted") ||
+      errMsg.includes("quota") ||
+      errMsg.includes("limit") ||
+      errMsg.includes("429")
+    ) {
+      throw new Error("All Gemini API keys are currently rate-limited. Please wait and try again.");
+    }
+    throw lastError;
+  }
+
+  throw new Error("All configured GEMINI_API_KEY entries exhausted or on cooldown.");
 }
 
 async function generateWithGroq(systemPrompt: string, userPrompt: string, responseFormatJson: boolean = false): Promise<string> {
@@ -367,11 +408,16 @@ app.get("/api/share/:id", async (req, res): Promise<any> => {
 
 // 1. Summarize
 app.post("/api/summarize", async (req, res): Promise<any> => {
-  const language = req.body?.preferences?.language || "en";
+  const { content, preferences } = req.body;
+  const language = preferences?.language || req.body?.language || "en";
   const isVi = language === "vi" || language === "bilingual";
 
+  console.log("[Summarize] ==== LANGUAGE DEBUG ====");
+  console.log("[Summarize] language received:", language);
+  console.log("[Summarize] isVi:", isVi);
+  console.log("[Summarize] Full preferences:", JSON.stringify(preferences, null, 2));
+
   try {
-    const { content, preferences } = req.body;
     if (!content || content.trim() === "") {
       return res.status(400).json({ error: "No news articles content provided." });
     }
@@ -409,6 +455,10 @@ LANGUAGE RULE: The entire report MUST be generated in ENGLISH.
 - Maintain native, polished English phrasing throughout all fields.`;
     }
 
+    // ===== LOG 2: Kiểm tra languageInstructions =====
+    console.log("[Summarize] languageInstructions (first 150 chars):", languageInstructions.substring(0, 150));
+    console.log("[Summarize] languageInstructions contains 'VIETNAMESE'? :", languageInstructions.includes("VIETNAMESE"));
+
     const systemPrompt = `You are an elite, highly professional veteran radio broadcast host, a smart route assistant, and the premium personal briefing anchor for CommuteCast. 
 Your tone must reflect a warm, authoritative, and deeply engaging broadcast anchor who naturally connects with listeners, rather than a robotic or flat text-to-speech engine. 
 
@@ -433,6 +483,10 @@ IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 7. Tùy chỉnh nội dung tóm tắt theo yêu cầu tiêu điểm: "${focus}".
 8. Tuân thủ độ dài hướng dẫn: ${lengthGuidelines}
 9. Áp dụng hướng dẫn riêng từ người dùng nếu có: "${customInstructions}"`;
+
+    // ===== LOG 3: Kiểm tra systemPrompt =====
+    console.log("[Summarize] systemPrompt (first 400 chars):", systemPrompt.substring(0, 400));
+    console.log("[Summarize] systemPrompt includes 'VIETNAMESE'? :", systemPrompt.includes("VIETNAMESE"));
 
     const promptText = `Generate a news broadcast report from the following raw news materials:\n\n${content}`;
 
@@ -506,6 +560,10 @@ Keep scriptText very natural for speaking. Do not include markdown bold or heade
       outputText = response.text || "";
     }
 
+    // ===== LOG 4: Kiểm tra kết quả từ model =====
+    console.log("[Summarize] outputText (first 500 chars):", outputText.substring(0, 500));
+    console.log("[Summarize] outputText contains Vietnamese diacritics? (check 200 chars):", outputText.substring(0, 200));
+
     if (!outputText || outputText.trim() === "") {
       throw new Error("Empty response received from content generation model.");
     }
@@ -528,6 +586,9 @@ function getGCloudTTSClient(): TextToSpeechClient | null {
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
       gcloudTTSClientInstance = new TextToSpeechClient({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
       console.log("[TTS - Google Cloud] Initialized client with keyFilename.");
+    } else if (process.env.GCLOUD_API_KEY) {
+      gcloudTTSClientInstance = new TextToSpeechClient({ apiKey: process.env.GCLOUD_API_KEY });
+      console.log("[TTS - Google Cloud] Initialized client with GCLOUD_API_KEY.");
     } else if (process.env.GCS_PRIVATE_KEY && process.env.GCS_CLIENT_EMAIL) {
       const privateKey = process.env.GCS_PRIVATE_KEY.replace(/\\n/g, "\n");
       gcloudTTSClientInstance = new TextToSpeechClient({
@@ -565,92 +626,160 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // ================== API TTS ==================
-// CẢI TIẾN: Chunking text tối ưu cho tiếng Việt
-function chunkTextForTTS(text: string, maxChars = 250): string[] {
-  // Split by [BREAK_1S] first
+// CẢI TIẾN: Nhận diện ngôn ngữ tiếng Việt tự động
+function detectLanguage(text: string): "vi" | "en" {
+  // Kiểm tra các ký tự tiếng Việt có dấu
+  const hasDiacritics = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text);
+  if (hasDiacritics) return "vi";
+  
+  // Kiểm tra một số từ nối/từ phổ biến tiếng Việt không dấu thường xuất hiện trong tin tức
+  const commonViWordsNoDiacritics = /\b(va|cua|la|trong|mot|co|duoc|cho|voi|nhung|de|ve|den|ra|tren|sau|chua|tu|co|nay|khong|nhu|ma)\b/i;
+  const matches = text.match(commonViWordsNoDiacritics);
+  if (matches && matches.length >= 2) {
+    return "vi";
+  }
+  
+  return "en";
+}
+
+// CẢI TIẾN: Chunking text thông minh, hỗ trợ phân loại ngôn ngữ và ranh giới câu (max 200 chars)
+interface TTSSegment {
+  text: string;
+  lang: "vi" | "en";
+}
+
+function segmentAndChunkTextForTTS(text: string, maxChars = 200): TTSSegment[] {
+  // Tách theo [BREAK_1S] trước để giữ ranh giới ngắt giọng
   const rawSegments = text.split(/\[BREAK_1S\]/i);
-  const finalChunks: string[] = [];
+  const finalSegments: TTSSegment[] = [];
 
   for (let segment of rawSegments) {
     segment = segment.trim();
     if (!segment) continue;
 
-    if (segment.length <= maxChars) {
-      finalChunks.push(segment);
-    } else {
-      // Split by sentence boundaries với dấu câu tiếng Việt đầy đủ
-      const sentences = segment.split(/(?<=[.?!;:…])\s+|\n+|(?<=[.?!;:…])\s*/);
-      let currentChunk = "";
+    // Tách câu dựa trên dấu câu ranh giới
+    const sentences = segment.split(/(?<=[.?!;:…])\s+|\n+/);
+    let currentChunk = "";
+    let currentLang: "vi" | "en" | null = null;
 
-      for (const sentence of sentences) {
-        const trimmedSentence = sentence.trim();
-        if (!trimmedSentence) continue;
+    for (const sentence of sentences) {
+      const trimmedSentence = sentence.trim();
+      if (!trimmedSentence) continue;
 
-        const candidate = currentChunk ? currentChunk + " " + trimmedSentence : trimmedSentence;
-        if (candidate.length <= maxChars) {
-          currentChunk = candidate;
-        } else {
-          if (currentChunk) {
-            finalChunks.push(currentChunk);
-          }
-          // Xử lý câu dài - cắt tại vị trí an toàn
-          if (trimmedSentence.length > maxChars) {
-            let start = 0;
-            while (start < trimmedSentence.length) {
-              let end = Math.min(start + maxChars, trimmedSentence.length);
-              // Tìm vị trí cắt an toàn (sau dấu cách hoặc dấu câu)
-              const lastSpace = trimmedSentence.lastIndexOf(' ', end);
-              const lastPunct = trimmedSentence.lastIndexOf('.', end);
-              const lastComma = trimmedSentence.lastIndexOf(',', end);
-              const cutPos = Math.max(lastSpace, lastPunct, lastComma);
-              if (cutPos > start) {
-                end = cutPos + 1;
-              }
-              finalChunks.push(trimmedSentence.substring(start, end).trim());
-              start = end;
+      const sentenceLang = detectLanguage(trimmedSentence);
+
+      if (currentLang === null) {
+        currentLang = sentenceLang;
+        currentChunk = trimmedSentence;
+      } else if (currentLang === sentenceLang && (currentChunk + " " + trimmedSentence).length <= maxChars) {
+        currentChunk += " " + trimmedSentence;
+      } else {
+        // Xuất đoạn trước đó
+        if (currentChunk) {
+          finalSegments.push({ text: currentChunk, lang: currentLang });
+        }
+        
+        // Nếu câu mới quá dài hơn maxChars, cắt nhỏ hơn
+        if (trimmedSentence.length > maxChars) {
+          let start = 0;
+          while (start < trimmedSentence.length) {
+            let end = Math.min(start + maxChars, trimmedSentence.length);
+            // Tìm ranh giới cắt an toàn
+            const spaceInWindow = trimmedSentence.substring(start, end);
+            const lastSpace = spaceInWindow.lastIndexOf(' ');
+            const lastComma = spaceInWindow.lastIndexOf(',');
+            const cutPos = Math.max(lastSpace, lastComma);
+            if (cutPos > 0 && end < trimmedSentence.length) {
+              end = start + cutPos + 1;
             }
-            currentChunk = "";
-          } else {
-            currentChunk = trimmedSentence;
+            finalSegments.push({ 
+              text: trimmedSentence.substring(start, end).trim(), 
+              lang: sentenceLang 
+            });
+            start = end;
           }
+          currentChunk = "";
+          currentLang = null;
+        } else {
+          currentChunk = trimmedSentence;
+          currentLang = sentenceLang;
         }
       }
-      if (currentChunk) {
-        finalChunks.push(currentChunk);
-      }
+    }
+
+    if (currentChunk) {
+      finalSegments.push({ text: currentChunk, lang: currentLang || "en" });
     }
   }
 
-  return finalChunks.filter(chunk => chunk.length > 0);
+  return finalSegments.filter(s => s.text.length > 0);
 }
 
-// CẢI TIẾN: Voice mapping với voices chất lượng cao nhất
+// Giữ nguyên hàm chunkTextForTTS cũ để không làm gãy các phần import/kiểu dữ liệu nếu có
+function chunkTextForTTS(text: string, maxChars = 200): string[] {
+  const segments = segmentAndChunkTextForTTS(text, maxChars);
+  return segments.map(s => s.text);
+}
+
+// CẢI TIẾN: Phối hợp giọng đọc phù hợp dựa trên ngôn ngữ thực tế và giọng nói ưu tiên của người dùng
+function getVoiceForLanguage(preferredVoice: string, detectedLang: "vi" | "en"): string {
+  const isPreferredVi = preferredVoice?.startsWith("vi") || preferredVoice === "Kore" || preferredVoice === "Charon";
+  
+  if (detectedLang === "vi") {
+    if (isPreferredVi) {
+      return preferredVoice; // Giữ nguyên lựa chọn tiếng Việt của người dùng
+    } else {
+      // Người dùng chọn giọng Anh nhưng văn bản là tiếng Việt -> map sang giọng Việt chất lượng cao tương đồng
+      if (preferredVoice === "en-UK" || preferredVoice === "Puck" || preferredVoice === "Fenrir") {
+        return "vi-HCM"; // Map giọng nam sang giọng Việt Nam nam (vi-HCM)
+      }
+      return "vi-HN"; // Mặc định là giọng nữ Bắc vi-HN
+    }
+  } else {
+    // Văn bản phát hiện là tiếng Anh (en)
+    if (!isPreferredVi) {
+      return preferredVoice || "en-US"; // Giữ nguyên lựa chọn giọng tiếng Anh của người dùng
+    } else {
+      // Người dùng chọn giọng Việt nhưng văn bản là tiếng Anh -> map sang giọng Anh chất lượng cao
+      if (preferredVoice === "vi-HCM") {
+        return "en-UK"; // Map giọng Nam sang giọng Anh-Anh en-UK
+      }
+      return "en-US"; // Mặc định là giọng Anh-Mỹ en-US
+    }
+  }
+}
+
+// Voice mapping với voices chất lượng cao nhất
 const EDGE_VOICE_MAP: Record<string, string> = {
-  "vi-HN": "vi-VN-HoaiMyNeural", // Female Northern - 2024, chất lượng xuất sắc
-  "vi-HCM": "vi-VN-NamMinhNeural", // Male Southern - tự nhiên, ấm áp
-  "vi": "vi-VN-HoaiMyNeural", // Default Vietnamese
-  "en-US": "en-US-JennyNeural", // Female US - rất tự nhiên
-  "en-UK": "en-GB-SoniaNeural", // Female UK - RP accent
-  "en": "en-US-JennyNeural", // Default English
+  "vi-HN": "vi-VN-HoaiMyNeural", // Female Northern
+  "vi-HCM": "vi-VN-NamMinhNeural", // Male Southern
+  "vi": "vi-VN-HoaiMyNeural",
+  "en-US": "en-US-JennyNeural",
+  "en-UK": "en-GB-SoniaNeural",
+  "en": "en-US-JennyNeural",
 };
 
 const GCLOUD_VOICE_MAP: Record<string, string> = {
-  "vi-HN": "vi-VN-Wavenet-C", // Female Northern - Wavenet chất lượng cao
-  "vi-HCM": "vi-VN-Wavenet-A", // Female Southern - Wavenet
+  "vi-HN": "vi-VN-Wavenet-C",
+  "vi-HCM": "vi-VN-Wavenet-A",
   "vi": "vi-VN-Wavenet-C",
-  "en-US": "en-US-Wavenet-F",
-  "en-UK": "en-GB-Wavenet-B",
+  "en-US": "en-US-Wavenet-F", // Female
+  "en-UK": "en-GB-Wavenet-B", // UK Male
   "en": "en-US-Wavenet-F",
+  // Map thêm voice aliases từ Gemini / custom preference để đồng bộ
+  "Zephyr": "en-US-Wavenet-F",
+  "Kore": "vi-VN-Wavenet-C",
+  "Puck": "en-GB-Wavenet-B",
+  "Charon": "vi-VN-Wavenet-A"
 };
 
-// CẢI TIẾN: Edge TTS với retry thông minh
+// Edge TTS với retry thông minh
 async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string): Promise<string> {
-  const maxRetries = 3;
+  const maxRetries = 1;
   let lastError: Error | null = null;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await withTimeout(callEdgeTTSForChunk(chunk, voice, rate), 8000);
+      return await withTimeout(callEdgeTTSForChunk(chunk, voice, rate), 5000);
     } catch (err: any) {
       lastError = err;
       const waitTime = attempt * 300;
@@ -662,13 +791,16 @@ async function callEdgeTTSWithRetry(chunk: string, voice: string, rate: string):
 }
 
 async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): Promise<string> {
-  const edgeVoice = EDGE_VOICE_MAP[voice] || EDGE_VOICE_MAP["vi"] || "en-US-JennyNeural";
-
+  const edgeVoice = EDGE_VOICE_MAP[voice] || EDGE_VOICE_MAP["en"] || "en-US-JennyNeural";
+  let pitch = "0%";
+  if (voice === "en-US" || voice === "en-UK" || voice === "en") {
+    pitch = "+5%";
+  }
   try {
     const audioBuffer = await runEdgeTTS(chunk, {
       voice: edgeVoice,
       rate: rate,
-      pitch: "0%"
+      pitch: pitch
     });
     if (audioBuffer && audioBuffer.length > 0) {
       return audioBuffer.toString("base64");
@@ -679,20 +811,20 @@ async function callEdgeTTSForChunk(chunk: string, voice: string, rate: string): 
   }
 }
 
-// CẢI TIẾN: Google Cloud TTS với voice mapping và speaking rate tối ưu
+// CẢI TIẾN: Google Cloud TTS (Wavenet) với cấu hình giọng đọc tự nhiên, ấm áp
 async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: string): Promise<string> {
   const client = getGCloudTTSClient();
   if (!client) {
     throw new Error("Google Cloud TTS client is not configured.");
   }
-
   const gcloudVoiceName = GCLOUD_VOICE_MAP[voice] || GCLOUD_VOICE_MAP["vi"] || "vi-VN-Wavenet-C";
   const gcloudLanguageCode = voice?.startsWith("vi") ? "vi-VN" : (voice?.startsWith("en-UK") ? "en-GB" : "en-US");
 
-  let speakingRate = 0.95; // Mặc định chậm hơn 5% cho rõ tiếng
+  // speakingRate = 0.95 (chậm tự nhiên), pitch = 0.5 (giọng sáng, ấm và rõ ràng)
+  let speakingRate = 0.95;
   if (tone === "fast") speakingRate = 1.1;
-  else if (tone === "conversational") speakingRate = 1.0;
-  else if (tone === "slow") speakingRate = 0.85;
+  else if (tone === "slow") speakingRate = 0.8;
+  else if (tone === "conversational") speakingRate = 0.95;
 
   try {
     const [response] = await withTimeout(
@@ -705,42 +837,40 @@ async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: st
         audioConfig: { 
           audioEncoding: "MP3", 
           speakingRate: speakingRate,
-          pitch: 0.0,
+          pitch: 0.5,
           volumeGainDb: 0
         },
       }),
-      10000 // 10s timeout
+      6000
     );
-
     const audioContent = response.audioContent;
     if (!audioContent) {
       throw new Error("Google Cloud TTS returned empty audio content.");
     }
-
     return (audioContent as Buffer).toString("base64");
   } catch (err: any) {
     throw new Error(`Google Cloud TTS API error: ${err.message || err}`);
   }
 }
 
-// CẢI TIẾN: Gemini TTS với timeout hợp lý
+// CẢI TIẾN: Gemini TTS cho tiếng Anh với prompt tối ưu hóa tuyệt đối ngữ điệu, temperature = 0.2
 async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string): Promise<string> {
   let voiceName = "Kore";
   let accentInstruction = "";
 
   // Cập nhật voice mapping cho Gemini
-  if (voice === "vi-HN" || voice === "vi") {
+  if (voice === "vi-HN" || voice === "vi" || voice === "Kore") {
     voiceName = "Kore";
     accentInstruction = "ROLE & STYLE: You are a premium, highly professional female radio broadcaster speaking with a clear, prestigious, standard Northern Vietnamese (Hà Nội) accent. Speak with absolute clarity, deep warmth, and professional newsroom cadence. Every word must be beautifully articulated with perfect Northern pronunciation. PACING & EMOTION: Speak naturally, pacing your speed like an elite newscaster. Use natural pauses at commas and periods to create breathing space. Avoid any flat, robotic, or mechanical text-to-speech cadence. Infuse elegant vocal modulation, subtle rising and falling intonations to maintain engagement, and deliver with professional studio quality.";
-  } else if (voice === "vi-HCM") {
+  } else if (voice === "vi-HCM" || voice === "Charon") {
     voiceName = "Zephyr";
     accentInstruction = "ROLE & STYLE: You are a premium, highly professional female radio broadcaster speaking with a warm, charming, standard Southern Vietnamese (Hồ Chí Minh City / Sài Gòn) accent. Speak with absolute clarity, sweet friendliness, and elite newsroom cadence. Every word must be beautifully articulated with standard Southern pronunciation. PACING & EMOTION: Speak naturally, pacing your speed like an elite newscaster. Use natural pauses at commas and periods to create breathing space. Avoid any flat, robotic, or mechanical text-to-speech cadence. Infuse elegant vocal modulation, sweet local cadence, and deliver with professional studio quality.";
-  } else if (voice === "en-UK") {
+  } else if (voice === "en-UK" || voice === "Puck" || voice === "Fenrir") {
     voiceName = "Puck";
-    accentInstruction = "Speak this text with a highly refined British English accent (Received Pronunciation - RP). Pronounce with clear, elegant British broadcaster cadence and superb pronunciation.";
-  } else if (voice === "en-US" || voice === "en") {
+    accentInstruction = "ROLE & STYLE: You are a premium, highly professional British radio presenter speaking with an elegant, prestigious Received Pronunciation (RP) accent. Speak with absolute clarity, deep warmth, and classic BBC newsroom cadence. Every word must be beautifully articulated. PACING & EMOTION: Speak naturally with expressive, professional radio cadence. Use subtle pauses at commas and sentence boundaries to create breathing space. Avoid flat, monotonous, or mechanical text-to-speech rhythm. Infuse sophisticated vocal modulation, natural rising and falling intonations to sound extremely human and engaging.";
+  } else if (voice === "en-US" || voice === "en" || voice === "Zephyr") {
     voiceName = "Zephyr";
-    accentInstruction = "Speak this text with a highly natural standard General American (GA) accent. Pronounce with premium American radio broadcast cadence, smooth and professional.";
+    accentInstruction = "ROLE & STYLE: You are an elite, highly professional American podcast host and news broadcaster speaking with a clean, standard General American (GA) accent. Speak with exceptional clarity, high engagement, warmth, and smooth radio cadence. Every word must be beautifully articulated. PACING & EMOTION: Deliver with expressive, natural flow, pacing your speed beautifully like a top-tier narrator. Use natural pauses at commas and periods for phrasing. Avoid flat, robotic, or mechanical text-to-speech rhythm. Infuse elegant vocal modulation, professional rising and falling intonations to sound highly natural and human.";
   }
 
   const ttsPrompt = accentInstruction 
@@ -753,7 +883,7 @@ async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string)
       contents: [{ parts: [{ text: ttsPrompt }] }],
       config: {
         responseModalities: ["AUDIO"],
-        temperature: 0.3,
+        temperature: 0.2, // Temperature thấp tối ưu độ ổn định và chính xác
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { voiceName }
@@ -770,16 +900,14 @@ async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string)
   return base64Audio;
 }
 
-// Google Translate TTS fallback (cải tiến với chunk nhỏ hơn)
+// Google Translate TTS fallback
 async function callGoogleTranslateTTSForChunk(chunk: string, voice: string): Promise<string> {
   try {
-    // Tách nhỏ hơn cho Translate TTS (max 180 chars)
     const maxLen = 180;
     const internalChunks: string[] = [];
     let start = 0;
     while (start < chunk.length) {
       let end = Math.min(start + maxLen, chunk.length);
-      // Cắt tại dấu cách nếu có thể
       if (end < chunk.length) {
         const lastSpace = chunk.lastIndexOf(' ', end);
         if (lastSpace > start) {
@@ -818,196 +946,186 @@ async function callGoogleTranslateTTSForChunk(chunk: string, voice: string): Pro
   }
 }
 
-// CẢI TIẾN: TTS endpoint với fallback logic thông minh
+// CẢI TIẾN ENGINE SELECTORS CHO TỪNG PHÂN ĐOẠN NGÔN NGỮ
+function selectEngineForVi(now: number, engineFailInRequest: Set<string>): "edge" | "gcloud" | "gemini" | "translate" {
+  // Tiếng Việt ưu tiên Edge TTS đầu tiên nhờ chất lượng vượt trội và miễn phí, sau đó fallback sang GCloud, Gemini, Translate
+  if (now >= globalEdgeTtsDisabledUntil && !engineFailInRequest.has("edge")) return "edge";
+  if (now >= globalGCloudTtsDisabledUntil && !engineFailInRequest.has("gcloud") && getGCloudTTSClient() !== null) return "gcloud";
+  if (now >= globalGeminiTtsDisabledUntil && !engineFailInRequest.has("gemini")) return "gemini";
+  return "translate";
+}
+
+function selectEngineForEn(now: number, engineFailInRequest: Set<string>): "gcloud" | "gemini" | "translate" {
+  // Tiếng Anh tuyệt đối không dùng Edge TTS trên production để tránh lỗi 403 Forbidden. Ưu tiên hàng đầu Google Cloud Wavenet và Gemini.
+  if (now >= globalGCloudTtsDisabledUntil && !engineFailInRequest.has("gcloud") && getGCloudTTSClient() !== null) return "gcloud";
+  if (now >= globalGeminiTtsDisabledUntil && !engineFailInRequest.has("gemini")) return "gemini";
+  return "translate";
+}
+
+// CẢI TIẾN: TTS endpoint với điều phối song ngữ thông minh, không chặn và ghép nối chuẩn xác
+// ================== ENDPOINT TTS CHÍNH ==================
 app.post("/api/tts", async (req, res): Promise<any> => {
   const { text, voice, tone } = req.body;
-  const isVi = voice?.startsWith("vi") || false;
+
+  // Sử dụng local Set cho từng request độc lập để tránh xung đột luồng xử lý đồng thời
+  const engineFailInRequest = new Set<string>();
+
+  console.log(`[TTS-DEBUG] Input Text Length: ${text?.length || 0}`);
+  console.log(`[TTS-DEBUG] Preferred Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
 
   try {
     if (!text || text.trim() === "") {
       return res.status(400).json({ error: "No text provided for audio synthesis." });
     }
 
-    // Split text thành chunks tối ưu
-    const chunks = chunkTextForTTS(text, 250);
-    console.log(`[TTS] Split input text into ${chunks.length} optimized chunks for processing.`);
+    // Tách văn bản thành các phân đoạn nhỏ dựa trên ngôn ngữ thực tế (tối đa 200 ký tự)
+    const segments = segmentAndChunkTextForTTS(text, 200);
+    console.log(`[TTS-DEBUG] Created ${segments.length} segment(s) based on language boundaries.`);
 
     const now = Date.now();
-    
-    // Xác định engine ưu tiên dựa trên ngôn ngữ và trạng thái
-    let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
-    
-    if (isVi) {
-      // TIẾNG VIỆT: Ưu tiên Edge TTS (chất lượng tốt nhất)
-      if (now < globalEdgeTtsDisabledUntil) {
-        // Edge đang bị disable, thử Google Cloud
-        if (now < globalGCloudTtsDisabledUntil) {
-          // Cả 2 đều disable, dùng Translate (miễn phí nhưng chất lượng kém)
-          activeEngine = "translate";
-        } else {
-          activeEngine = "gcloud";
-        }
+    const rateMap: Record<string, string> = {
+      "fast": "+15%",
+      "conversational": "0%",
+      "slow": "-15%",
+      "professional": "0%",
+    };
+    const rate = rateMap[tone || "conversational"] || "0%";
+
+    const finalAudioBuffers: Buffer[] = [];
+    let activeEngineUsedForMetadata: string = "unknown";
+
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index];
+      const chunk = segment.text;
+      const lang = segment.lang;
+      
+      // Chọn giọng đọc thích hợp nhất với ngôn ngữ phân đoạn
+      const segmentVoice = getVoiceForLanguage(voice, lang);
+      
+      // Lựa chọn engine tối ưu nhất cho ngôn ngữ này
+      let activeEngine: "gemini" | "gcloud" | "edge" | "translate";
+      if (lang === "vi") {
+        activeEngine = selectEngineForVi(now, engineFailInRequest);
       } else {
-        activeEngine = "edge";
+        activeEngine = selectEngineForEn(now, engineFailInRequest);
       }
-    } else {
-      // TIẾNG ANH: Ưu tiên Gemini TTS (chất lượng cao nhất)
-      if (now < globalGeminiTtsDisabledUntil) {
-        if (now < globalGCloudTtsDisabledUntil) {
-          if (now < globalEdgeTtsDisabledUntil) {
-            activeEngine = "translate";
-          } else {
-            activeEngine = "edge";
-          }
-        } else {
-          activeEngine = "gcloud";
-        }
-      } else {
-        activeEngine = "gemini";
-      }
-    }
 
-    let success = false;
-    let finalAudioBuffers: Buffer[] = [];
-    let attemptsCount = 0;
-    const MAX_ATTEMPTS = 5;
+      console.log(`[TTS] Segment ${index + 1}/${segments.length} (${lang}): Engine choice = ${activeEngine}, Voice = ${segmentVoice}`);
 
-    while (!success && attemptsCount < MAX_ATTEMPTS) {
-      attemptsCount++;
-      console.log(`[TTS] Attempt ${attemptsCount}/${MAX_ATTEMPTS}: Processing all ${chunks.length} segments with engine "${activeEngine}"`);
+      let success = false;
+      let base64Audio = "";
+      let attemptsCount = 0;
+      const MAX_ATTEMPTS = 4; // Tối đa 4 nỗ lực chuyển đổi dự phòng
 
-      try {
-        finalAudioBuffers = [];
+      while (!success && attemptsCount < MAX_ATTEMPTS) {
+        attemptsCount++;
         
-        // Xác định tốc độ đọc cho engine
-        const rateMap: Record<string, string> = {
-          "fast": "+15%",
-          "conversational": "0%",
-          "slow": "-15%",
-          "professional": "0%",
-        };
-        const rate = rateMap[tone || "conversational"] || "0%";
+        if (engineFailInRequest.has(activeEngine)) {
+          const fallbackList = lang === "vi" 
+            ? ["edge", "gcloud", "gemini", "translate"]
+            : ["gcloud", "gemini", "translate"];
+          const nextEngine = fallbackList.find(e => e !== activeEngine && !engineFailInRequest.has(e));
+          if (nextEngine) {
+            activeEngine = nextEngine as any;
+            continue;
+          } else {
+            break;
+          }
+        }
 
-        for (let index = 0; index < chunks.length; index++) {
-          const chunk = chunks[index];
-          let base64Audio = "";
-
-          try {
-            if (activeEngine === "gemini") {
+        try {
+          const startTime = Date.now();
+          switch (activeEngine) {
+            case "gemini":
               base64Audio = await withTimeout(
-                callGeminiTTSForChunk(chunk, voice || "en-US", tone || "conversational"),
-                30000
+                callGeminiTTSForChunk(chunk, segmentVoice, tone || "conversational"),
+                10000
               );
-            } else if (activeEngine === "gcloud") {
-              base64Audio = await callGoogleCloudTTSForChunk(chunk, voice || "en-US", tone || "conversational");
-            } else if (activeEngine === "edge") {
-              base64Audio = await callEdgeTTSWithRetry(chunk, voice || "vi-HN", rate);
-            } else {
-              base64Audio = await callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN");
-            }
-          } catch (chunkErr: any) {
-            // Nếu chunk fail, thử fallback ngay lập tức cho chunk này
-            console.warn(`[TTS] Chunk ${index + 1}/${chunks.length} failed with ${activeEngine}. Trying fallback...`);
-            
-            // Thử các engine khác cho chunk này
-            const fallbackEngines = isVi 
-              ? ["gcloud", "translate"] 
-              : ["gcloud", "edge", "translate"];
-            
-            let fallbackSuccess = false;
-            for (const fallbackEngine of fallbackEngines) {
-              if (fallbackEngine === activeEngine) continue;
-              try {
-                if (fallbackEngine === "gcloud") {
-                  base64Audio = await callGoogleCloudTTSForChunk(chunk, voice || "en-US", tone || "conversational");
-                } else if (fallbackEngine === "edge") {
-                  base64Audio = await callEdgeTTSWithRetry(chunk, voice || "vi-HN", rate);
-                } else {
-                  base64Audio = await callGoogleTranslateTTSForChunk(chunk, voice || "vi-HN");
-                }
-                fallbackSuccess = true;
-                console.log(`[TTS] Chunk ${index + 1} succeeded with fallback engine "${fallbackEngine}"`);
-                break;
-              } catch (fbErr) {
-                console.warn(`[TTS] Fallback engine "${fallbackEngine}" also failed for chunk ${index + 1}`);
-              }
-            }
-            
-            if (!fallbackSuccess) {
-              throw new Error(`All engines failed for chunk ${index + 1}: ${chunkErr.message}`);
-            }
+              break;
+            case "gcloud":
+              base64Audio = await withTimeout(
+                callGoogleCloudTTSForChunk(chunk, segmentVoice, tone || "conversational"),
+                8000
+              );
+              break;
+            case "edge":
+              base64Audio = await withTimeout(
+                callEdgeTTSWithRetry(chunk, segmentVoice, rate),
+                6000
+              );
+              break;
+            case "translate":
+              base64Audio = await withTimeout(
+                callGoogleTranslateTTSForChunk(chunk, segmentVoice),
+                5000
+              );
+              break;
           }
 
           if (!base64Audio) {
-            throw new Error(`Engine ${activeEngine} returned empty audio data for chunk ${index + 1}`);
+            throw new Error(`Engine ${activeEngine} returned empty response.`);
           }
+
+          const elapsed = Date.now() - startTime;
+          console.log(`[TTS] Segment ${index + 1} completed using ${activeEngine} in ${elapsed}ms`);
+          
           finalAudioBuffers.push(Buffer.from(base64Audio, "base64"));
-        }
-        
-        success = true;
-        lastSuccessfulEngine = activeEngine;
-        
-        // Reset disabled flags nếu engine hoạt động tốt
-        if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
-        else if (activeEngine === "gcloud") globalGCloudTtsDisabledUntil = 0;
-        else if (activeEngine === "gemini") globalGeminiTtsDisabledUntil = 0;
-        
-        console.log(`[TTS] Successfully processed all ${chunks.length} segments using engine "${activeEngine}"`);
-        
-      } catch (err: any) {
-        const errMsg = err.message || String(err);
-        console.warn(`[TTS] Engine "${activeEngine}" failed during request: ${errMsg}`);
-        
-        // Fallback logic
-        if (isVi) {
+          success = true;
+          activeEngineUsedForMetadata = activeEngine;
+
+          // Khôi phục trạng thái hoạt động của engine nếu thành công mượt mà
+          if (activeEngine === "edge") globalEdgeTtsDisabledUntil = 0;
+          else if (activeEngine === "gcloud") globalGCloudTtsDisabledUntil = 0;
+          else if (activeEngine === "gemini") globalGeminiTtsDisabledUntil = 0;
+
+        } catch (err: any) {
+          const errMsg = err.message || String(err);
+          console.warn(`[TTS] Segment ${index + 1} failed on engine "${activeEngine}": ${errMsg}`);
+          engineFailInRequest.add(activeEngine);
+          
+          // Tạm khóa engine gặp sự cố trong 3 phút để tránh nghẽn luồng xử lý
           if (activeEngine === "edge") {
-            globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000; // 3 phút
-            activeEngine = "gcloud";
-          } else if (activeEngine === "gcloud") {
-            globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
-            activeEngine = "translate";
-          } else {
-            // Translate là fallback cuối cùng, nếu fail thì throw
-            if (attemptsCount >= MAX_ATTEMPTS) {
-              throw new Error(`All Vietnamese voice engines failed after ${MAX_ATTEMPTS} attempts. Last error: ${errMsg}`);
-            }
-          }
-        } else {
-          if (activeEngine === "gemini") {
-            globalGeminiTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
-            activeEngine = "gcloud";
-          } else if (activeEngine === "gcloud") {
-            globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
-            activeEngine = "edge";
-          } else if (activeEngine === "edge") {
             globalEdgeTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
-            activeEngine = "translate";
+          } else if (activeEngine === "gcloud") {
+            globalGCloudTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
+          } else if (activeEngine === "gemini") {
+            globalGeminiTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
+          }
+
+          // Lựa chọn fallback tiếp theo ngay lập tức cho phân đoạn này
+          const fallbackList = lang === "vi" 
+            ? ["edge", "gcloud", "gemini", "translate"]
+            : ["gcloud", "gemini", "translate"];
+          const nextEngine = fallbackList.find(e => !engineFailInRequest.has(e));
+          if (nextEngine) {
+            activeEngine = nextEngine as any;
           } else {
-            if (attemptsCount >= MAX_ATTEMPTS) {
-              throw new Error(`All voice engines failed after ${MAX_ATTEMPTS} attempts. Last error: ${errMsg}`);
-            }
+            break;
           }
         }
       }
+
+      if (!success) {
+        throw new Error(`All voice engines failed for segment ${index + 1}.`);
+      }
     }
 
-    if (!success || finalAudioBuffers.length === 0) {
-      throw new Error("Could not synthesize audio with any available engine.");
+    if (finalAudioBuffers.length === 0) {
+      throw new Error("Sự cố xảy ra, không thể tổng hợp giọng đọc từ bất kỳ công cụ nào.");
     }
 
-    // Nối tất cả audio buffers
     const mergedBuffer = Buffer.concat(finalAudioBuffers);
-    console.log(`[TTS] Final merged audio size: ${mergedBuffer.length} bytes (Engine: ${activeEngine}).`);
+    console.log(`[TTS] Full synthesis succeeded! Total size: ${mergedBuffer.length} bytes.`);
 
     return res.json({ 
       base64Audio: mergedBuffer.toString("base64"),
-      engine: activeEngine,
-      chunksCount: chunks.length
+      engine: activeEngineUsedForMetadata,
+      chunksCount: segments.length
     });
 
   } catch (error: any) {
-    console.error("TTS Synthesis error:", error);
-    const friendlyError = parseGeminiError(error, isVi, true);
+    console.error("[TTS API Ultimate Error]:", error);
+    const friendlyError = parseGeminiError(error, voice?.startsWith("vi"), true);
     return res.status(500).json({ error: friendlyError });
   }
 });
@@ -1842,14 +1960,16 @@ async function loadPublishedEpisodes(forceRefresh: boolean = false): Promise<Pub
   return localEps.length > 0 ? localEps : (cachedEpisodesInMem || []);
 }
 
-function savePublishedEpisodes(episodes: PublishedEpisode[]) {
+async function savePublishedEpisodes(episodes: PublishedEpisode[]) {
   cachedEpisodesInMem = episodes;
   lastCacheSyncTime = Date.now();
   cachedRssXml = null;
   try {
     fs.writeFileSync(PODCASTS_JSON_PATH, JSON.stringify(episodes, null, 2), "utf8");
-  } catch (err) { /* ignore */ }
-  savePublishedEpisodesToSupabaseAsync(episodes);
+  } catch (err) {
+    console.error("[Podcast] Failed to write local file:", err);
+  }
+  await savePublishedEpisodesToSupabaseAsync(episodes);
 }
 
 let gcsClientInstance: Storage | null = null;
@@ -2289,7 +2409,14 @@ app.post("/api/podcast/publish", async (req, res): Promise<any> => {
     };
 
     episodes.unshift(newEpisode);
-    savePublishedEpisodes(episodes);
+    await savePublishedEpisodes(episodes);  // <-- Thêm await
+    cachedEpisodesInMem = null; // Xóa cache episodes
+    lastCacheSyncTime = 0;
+         // Reset cache RSS feed
+    cachedRssXml = null;
+    lastRssXmlTimestamp = 0;
+    console.log("[Podcast] RSS feed cache invalidated after publishing new episode.");
+    console.log("[Podcast] Cache invalidated after publishing.");
 
     return res.json({
       success: true,
@@ -2360,7 +2487,12 @@ app.delete("/api/podcast/episodes/:id", async (req, res): Promise<any> => {
 
     episodes.splice(index, 1);
     savePublishedEpisodes(episodes);
-    return res.json({ success: true, message: "Episode deleted successfully" });
+        // Reset cache RSS feed
+    cachedRssXml = null;
+    lastRssXmlTimestamp = 0;
+    console.log(`[Podcast] RSS feed cache invalidated after deleting episode ${id}.`);
+
+        return res.json({ success: true, message: "Episode deleted successfully" });
   } catch (err: any) {
     console.error("Failed to delete episode:", err);
     res.status(500).json({ error: err.message || "Failed to delete episode" });
@@ -2496,8 +2628,31 @@ async function serveApp() {
     app.use(vite.middlewares);
   } else {
     console.log("[CommuteCast Backend] Serving static files from dist...");
-    app.use(express.static(distPath));
+    
+    // ===== CẤU HÌNH CACHE CHO FILE TĨNH =====
+    // 1. File JS/CSS/Assets: cache lâu dài (1 năm)
+    app.use(
+      express.static(distPath, {
+        maxAge: "1y",
+        setHeaders: (res, filePath) => {
+          // Nếu là index.html, không cache
+          if (filePath.endsWith("index.html")) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+          } else {
+            // Các file khác (JS, CSS, ảnh) cache 1 năm
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          }
+        },
+      })
+    );
+
+    // 2. Route fallback: trả về index.html với header no-cache
     app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
@@ -2506,5 +2661,49 @@ async function serveApp() {
     console.log(`[CommuteCast Backend] running on http://localhost:${PORT}`);
   });
 }
+
+app.get("/api/debug/podcast-file", (req, res) => {
+  try {
+    if (!fs.existsSync(PODCASTS_JSON_PATH)) {
+      return res.json({ error: "File not found" });
+    }
+    const data = fs.readFileSync(PODCASTS_JSON_PATH, "utf8");
+    const parsed = JSON.parse(data);
+    res.json({
+      count: parsed.length,
+      episodes: parsed.map((ep: any) => ({ id: ep.id, title: ep.title, pubDate: ep.pubDate }))
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/debug/cache-status", (req, res) => {
+  res.json({
+    cachedEpisodesInMem: cachedEpisodesInMem ? cachedEpisodesInMem.length : 0,
+    lastCacheSyncTime: lastCacheSyncTime,
+    cachedRssXml: cachedRssXml ? "có" : "không",
+    lastRssXmlTimestamp: lastRssXmlTimestamp,
+  });
+});
+
+app.post("/api/test-tts", async (req, res) => {
+  const { text, engine } = req.body;
+  try {
+    let result;
+    if (engine === "edge") {
+      result = await callEdgeTTSForChunk(text, "vi-HN", "0%");
+    } else if (engine === "gcloud") {
+      result = await callGoogleCloudTTSForChunk(text, "vi-HN", "conversational");
+    } else if (engine === "gemini") {
+      result = await callGeminiTTSForChunk(text, "en-US", "conversational");
+    } else {
+      result = await callGoogleTranslateTTSForChunk(text, "vi-HN");
+    }
+    res.json({ success: true, length: result.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 serveApp();

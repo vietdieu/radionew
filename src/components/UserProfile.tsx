@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { User, LogOut, Cloud, CloudOff, CloudLightning, RefreshCw, Key } from "lucide-react";
+import { User, LogOut, Cloud, CloudOff, CloudLightning, RefreshCw, Key, XCircle } from "lucide-react";
 import { getSupabaseClientAsync } from "../services/supabaseClient";
 import { SyncStatus } from "../hooks/useSync";
+import { performFullSyncAsync } from "../services/syncService";
 import LoginModal from "./LoginModal";
 
 interface UserProfileProps {
@@ -9,6 +10,7 @@ interface UserProfileProps {
   syncStatus: SyncStatus;
   isOnline: boolean;
   onSync: () => void;
+  onAbortSync?: () => void; // <-- Thêm prop này để hủy đồng bộ
   uiLanguage: "vi" | "en";
 }
 
@@ -23,7 +25,9 @@ const uDict = {
     error: "Lỗi đồng bộ",
     unauthenticated: "Chưa đăng nhập",
     greeting: "Xin chào",
-    syncNow: "Đồng bộ ngay"
+    syncNow: "Đồng bộ ngay",
+    abortSync: "Hủy đồng bộ",
+    abortConfirm: "Bạn có chắc muốn hủy đồng bộ?\nDữ liệu sẽ không được cập nhật lên cloud."
   },
   en: {
     signInBtn: "Cloud Sync",
@@ -35,7 +39,9 @@ const uDict = {
     error: "Sync error",
     unauthenticated: "Unauthenticated",
     greeting: "Hello",
-    syncNow: "Sync Now"
+    syncNow: "Sync Now",
+    abortSync: "Abort Sync",
+    abortConfirm: "Are you sure you want to abort sync?\nData will not be updated to cloud."
   }
 };
 
@@ -44,17 +50,41 @@ export default function UserProfile({
   syncStatus,
   isOnline,
   onSync,
+  onAbortSync,
   uiLanguage
 }: UserProfileProps) {
   const u = uDict[uiLanguage];
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
+  // Hàm đăng xuất có đồng bộ trước khi logout
   const handleSignOut = async () => {
+    try {
+      console.log("[Logout] Syncing data before logout...");
+      if (isOnline) {
+        await performFullSyncAsync();
+        console.log("[Logout] Sync completed successfully.");
+      } else {
+        console.warn("[Logout] Offline, skipping sync before logout.");
+      }
+    } catch (err) {
+      console.error("[Logout] Sync failed, but continuing logout:", err);
+    }
+
     const supabase = await getSupabaseClientAsync();
     if (supabase) {
       await supabase.auth.signOut();
       setDropdownOpen(false);
+      window.location.href = '/';
+    }
+  };
+
+  // Xử lý hủy đồng bộ với hộp thoại xác nhận
+  const handleAbortSync = () => {
+    if (!onAbortSync) return;
+    const confirmed = window.confirm(u.abortConfirm);
+    if (confirmed) {
+      onAbortSync();
     }
   };
 
@@ -97,10 +127,23 @@ export default function UserProfile({
             onClick={() => onSync()}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold cursor-pointer transition-all hover:scale-105 active:scale-95 ${getSyncBg()}`}
             title={u.syncNow}
+            disabled={syncStatus === "syncing"}
           >
             {getSyncIcon()}
             <span className="hidden sm:inline">{u[syncStatus]}</span>
           </button>
+
+          {/* Nút Hủy đồng bộ - chỉ hiển thị khi đang đồng bộ */}
+          {syncStatus === "syncing" && onAbortSync && (
+            <button
+              onClick={handleAbortSync}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold bg-rose-950/40 border border-rose-800/60 text-rose-300 hover:bg-rose-950/60 transition-all hover:scale-105 active:scale-95"
+              title={u.abortSync}
+            >
+              <XCircle className="w-4 h-4" />
+              <span className="hidden sm:inline">{u.abortSync}</span>
+            </button>
+          )}
 
           {/* User Button */}
           <button
@@ -126,10 +169,22 @@ export default function UserProfile({
                 <button
                   onClick={() => { onSync(); setDropdownOpen(false); }}
                   className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 transition cursor-pointer font-medium text-slate-200"
+                  disabled={syncStatus === "syncing"}
                 >
                   <RefreshCw className="w-4 h-4 text-cyan-400" />
                   <span>{u.syncNow}</span>
                 </button>
+
+                {/* Nếu đang đồng bộ, hiển thị nút hủy trong dropdown (tùy chọn) */}
+                {syncStatus === "syncing" && onAbortSync && (
+                  <button
+                    onClick={handleAbortSync}
+                    className="w-full text-left px-4 py-2.5 hover:bg-rose-950/30 text-rose-400 hover:text-rose-300 flex items-center gap-2.5 transition cursor-pointer font-bold border-t border-slate-800"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>{u.abortSync}</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleSignOut()}

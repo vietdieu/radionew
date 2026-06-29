@@ -5,70 +5,81 @@ import {
   deleteBriefing, 
   getVoiceHistory, 
   saveVoiceHistory, 
-  clearVoiceHistory 
+  clearVoiceHistory,
+  loadSyncQueue,
+  saveSyncQueue as saveSyncQueueToDB,
+  clearSyncQueue as clearSyncQueueFromDB,
+  SyncQueueItem as StorageSyncQueueItem
 } from "./storageService";
 import { SavedSummary, VoiceHistoryItem } from "../types";
 import { UserPreferences } from "../components/UserPreferencesProvider";
 
-export interface SyncQueueItem {
-  id: string; // unique ID of the queue item
-  type: "briefing" | "preferences" | "voice_history";
-  action: "save" | "delete" | "clear";
-  targetId?: string; // target item ID (e.g., briefing ID)
-  data?: any; // serialized payload
-  timestamp: number;
-}
+// Sử dụng lại kiểu từ storageService để đồng bộ
+export type SyncQueueItem = StorageSyncQueueItem;
 
-const SYNC_QUEUE_KEY = "commutecast_sync_queue";
+// ===== BIẾN QUẢN LÝ ABORT =====
+let currentSyncAbortController: AbortController | null = null;
+
+// ===== HÀM HỦY ĐỒNG BỘ =====
+export function abortSync(): boolean {
+  if (currentSyncAbortController) {
+    currentSyncAbortController.abort();
+    console.log("[Sync] Abort signal sent.");
+    return true;
+  }
+  return false;
+}
 
 // ================== OFFLINE QUEUE MANAGEMENT ==================
 
-export function getSyncQueue(): SyncQueueItem[] {
+export async function getSyncQueue(): Promise<SyncQueueItem[]> {
   try {
-    const queueStr = localStorage.getItem(SYNC_QUEUE_KEY);
-    return queueStr ? JSON.parse(queueStr) : [];
+    return await loadSyncQueue();
   } catch (err) {
     console.error("[Sync] Failed to read sync queue:", err);
     return [];
   }
 }
 
-export function saveSyncQueue(queue: SyncQueueItem[]): void {
+export async function saveSyncQueue(queue: SyncQueueItem[]): Promise<void> {
   try {
-    localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(queue));
+    await saveSyncQueueToDB(queue);
   } catch (err) {
     console.error("[Sync] Failed to save sync queue:", err);
   }
 }
 
-export function addToSyncQueue(item: Omit<SyncQueueItem, "id" | "timestamp">): void {
-  const queue = getSyncQueue();
+export async function addToSyncQueue(item: Omit<SyncQueueItem, "id" | "timestamp">): Promise<void> {
+  const queue = await getSyncQueue();
   const newItem: SyncQueueItem = {
     ...item,
     id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now()
   };
 
-  // If there's an existing save/delete for the same item, optimize the queue
+  // Optimize queue: remove redundant pending saves if delete follows
   let filtered = queue;
   if (item.targetId) {
-    // If we delete an item, we can remove any pending saves for it
     if (item.action === "delete") {
       filtered = queue.filter(q => !(q.targetId === item.targetId && q.action === "save"));
-    }
-    // If we save an item, we can replace any existing pending saves for it
-    else if (item.action === "save") {
+    } else if (item.action === "save") {
       filtered = queue.filter(q => !(q.targetId === item.targetId && q.action === "save"));
     }
   }
 
   filtered.push(newItem);
-  saveSyncQueue(filtered);
+  await saveSyncQueue(filtered);
   console.log(`[Sync Queue] Added item: ${item.type} (${item.action})`);
 }
 
-export function clearSyncQueue(): void {
-  localStorage.removeItem(SYNC_QUEUE_KEY);
+export async function clearSyncQueue(): Promise<void> {
+  await clearSyncQueueFromDB();
+  // Xóa key localStorage cũ để giải phóng bộ nhớ
+  try {
+    localStorage.removeItem('commutecast_sync_queue');
+  } catch (e) {
+    // ignore
+  }
 }
 
 // ================== SYNC UTILITIES ==================
@@ -95,10 +106,17 @@ export function parseTimestamp(ts: string | undefined): Date {
   return new Date(0);
 }
 
-// ================== SYNC PROCESSOR ==================
+// ================== SYNC PROCESSOR (CÓ HỖ TRỢ ABORT) ==================
 
-export async function processSyncQueueAsync(): Promise<boolean> {
-  if (!isOnline()) return false;
+export async function processSyncQueueAsync(signal?: AbortSignal): Promise<boolean> {
+  if (!isOnline()) {
+    console.warn("[Sync Queue] Offline, cannot process.");
+    return false;
+  }
+  if (signal?.aborted) {
+    console.warn("[Sync Queue] Aborted before processing.");
+    return false;
+  }
 
   const supabase = await getSupabaseClientAsync();
   if (!supabase) return false;
@@ -107,13 +125,22 @@ export async function processSyncQueueAsync(): Promise<boolean> {
   if (!session || !session.user) return false;
 
   const userId = session.user.id;
-  const queue = getSyncQueue();
+  const queue = await getSyncQueue();
   if (queue.length === 0) return true;
 
   console.log(`[Sync Queue] Processing ${queue.length} items from offline queue...`);
   const failedItems: SyncQueueItem[] = [];
 
   for (const item of queue) {
+    // Kiểm tra hủy
+    if (signal?.aborted) {
+      console.log("[Sync Queue] Aborted during processing.");
+      // Lưu lại các item chưa xử lý để xử lý sau
+      const remaining = queue.slice(queue.indexOf(item));
+      await saveSyncQueue([...failedItems, ...remaining]);
+      return false;
+    }
+
     try {
       if (item.type === "briefing") {
         if (item.action === "save" && item.data) {
@@ -183,75 +210,98 @@ export async function processSyncQueueAsync(): Promise<boolean> {
     }
   }
 
-  saveSyncQueue(failedItems);
+  await saveSyncQueue(failedItems);
   return failedItems.length === 0;
 }
 
-// ================== TWO-WAY SYNCHRONIZATION ==================
+// ================== TWO-WAY SYNCHRONIZATION (CÓ HỖ TRỢ ABORT) ==================
 
 export async function performFullSyncAsync(): Promise<boolean> {
-  if (!isOnline()) return false;
+  if (!isOnline()) {
+    console.warn("[Sync] Offline, cannot sync.");
+    return false;
+  }
 
-  // Nếu trình duyệt đang tổng hợp âm thanh, hoãn chạy đồng bộ đầy đủ để tránh xung đột băng thông & CPU
+  // Nếu trình duyệt đang tổng hợp âm thanh, hoãn chạy đồng bộ đầy đủ
   if (typeof window !== "undefined" && (window as any).isCommuteCastGeneratingBriefing) {
     console.log("[SyncService] Audio generation is in progress. Deferring full sync.");
     return false;
   }
 
+  // Hủy đồng bộ cũ nếu có
+  if (currentSyncAbortController) {
+    currentSyncAbortController.abort();
+  }
+
+  const controller = new AbortController();
+  currentSyncAbortController = controller;
+  const signal = controller.signal;
+
   const supabase = await getSupabaseClientAsync();
-  if (!supabase) return false;
+  if (!supabase) {
+    currentSyncAbortController = null;
+    return false;
+  }
 
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session || !session.user) return false;
+  if (!session || !session.user) {
+    currentSyncAbortController = null;
+    return false;
+  }
 
   const userId = session.user.id;
   console.log(`[Sync] Starting full two-way synchronization for User: ${userId}`);
 
   try {
-    // 0. Process any pending offline mutations first
-    await processSyncQueueAsync();
+    // 0. Process pending offline queue (có hỗ trợ abort)
+    const queueOk = await processSyncQueueAsync(signal);
+    if (signal.aborted) throw new Error('AbortError');
+    if (!queueOk) {
+      console.warn("[Sync] Queue processing failed, but continuing with cloud sync.");
+    }
 
     // 1. Sync UserPreferences
+    if (signal.aborted) throw new Error('AbortError');
     const { data: prefData, error: prefErr } = await supabase
       .from("user_preferences")
-      .select("preferences, updated_at")
+      .select("preferences, updated_at", { signal } as any)
       .eq("user_id", userId)
       .maybeSingle();
 
+    if (signal.aborted) throw new Error('AbortError');
     if (prefErr) console.warn("[Sync] Error loading cloud user preferences:", prefErr);
 
     const localPrefStr = localStorage.getItem("commutecast_user_preferences");
     const localPref = localPrefStr ? JSON.parse(localPrefStr) : null;
 
     if (localPref && prefData) {
-      // Both exist - keep latest or local by default
-      // If user wants to sync cloud preference down, we can update local storage
       localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
     } else if (localPref && !prefData) {
-      // Local exists, cloud doesn't - upload
+      if (signal.aborted) throw new Error('AbortError');
       await supabase.from("user_preferences").upsert({
         user_id: userId,
         preferences: localPref,
         updated_at: new Date().toISOString()
-      });
+      }, { signal } as any);
     } else if (!localPref && prefData) {
-      // Cloud exists, local doesn't - download
       localStorage.setItem("commutecast_user_preferences", JSON.stringify(prefData.preferences));
     }
 
     // 2. Sync VoiceHistory
+    if (signal.aborted) throw new Error('AbortError');
     const { data: cloudVoice, error: voiceErr } = await supabase
       .from("voice_history")
-      .select("*")
+      .select("*", { signal } as any)
       .eq("user_id", userId);
 
+    if (signal.aborted) throw new Error('AbortError');
     if (voiceErr) console.warn("[Sync] Error loading cloud voice history:", voiceErr);
 
     const localVoice = await getVoiceHistory();
 
     if (cloudVoice && cloudVoice.length > 0) {
-      // Simple merge: insert missing into local and upload missing to cloud
       for (const item of cloudVoice) {
+        if (signal.aborted) throw new Error('AbortError');
         const existsLocally = localVoice.some(lv => lv.id === item.id);
         if (!existsLocally) {
           await saveVoiceHistory({
@@ -265,9 +315,10 @@ export async function performFullSyncAsync(): Promise<boolean> {
         }
       }
     }
-    // Upload local-only voice items to cloud
+    // Upload local-only voice items
     if (localVoice.length > 0) {
       for (const item of localVoice) {
+        if (signal.aborted) throw new Error('AbortError');
         const existsOnCloud = cloudVoice?.some(cv => cv.id === item.id);
         if (!existsOnCloud) {
           await supabase.from("voice_history").upsert({
@@ -279,17 +330,19 @@ export async function performFullSyncAsync(): Promise<boolean> {
             sources: item.sources || [],
             timestamp: item.timestamp,
             updated_at: new Date().toISOString()
-          });
+          }, { signal } as any);
         }
       }
     }
 
     // 3. Sync Briefings (Two-Way Conflict Resolution)
+    if (signal.aborted) throw new Error('AbortError');
     const { data: cloudBriefings, error: briefErr } = await supabase
       .from("briefings")
-      .select("*")
+      .select("*", { signal } as any)
       .eq("user_id", userId);
 
+    if (signal.aborted) throw new Error('AbortError');
     if (briefErr) throw briefErr;
 
     const localBriefings = await getAllBriefings(true);
@@ -302,12 +355,12 @@ export async function performFullSyncAsync(): Promise<boolean> {
     const localBriefingsMap = new Map<string, SavedSummary>();
     localBriefings.forEach(lb => localBriefingsMap.set(lb.id, lb));
 
-    // A. Sync from Cloud to Local and handle conflicts
+    // A. Sync from Cloud to Local
     for (const [id, cb] of cloudBriefingsMap.entries()) {
+      if (signal.aborted) throw new Error('AbortError');
       const lb = localBriefingsMap.get(id);
 
       if (!lb) {
-        // Cloud exists, Local doesn't - download
         console.log(`[Sync] Downloading briefing ${id} from cloud...`);
         await saveBriefing({
           id: cb.id,
@@ -319,12 +372,10 @@ export async function performFullSyncAsync(): Promise<boolean> {
           shareCount: cb.share_count || 0
         });
       } else {
-        // Both exist - conflict resolution by updated_at or timestamp
         const cbDate = cb.updated_at ? new Date(cb.updated_at) : parseTimestamp(cb.timestamp);
         const lbDate = parseTimestamp(lb.timestamp);
 
         if (cbDate.getTime() > lbDate.getTime()) {
-          // Cloud is newer - overwrite local
           console.log(`[Sync] Cloud has newer version of briefing ${id}. Overwriting local...`);
           await saveBriefing({
             id: cb.id,
@@ -336,8 +387,8 @@ export async function performFullSyncAsync(): Promise<boolean> {
             shareCount: cb.share_count || 0
           });
         } else if (lbDate.getTime() > cbDate.getTime()) {
-          // Local is newer - overwrite cloud
           console.log(`[Sync] Local has newer version of briefing ${id}. Overwriting cloud...`);
+          if (signal.aborted) throw new Error('AbortError');
           await supabase.from("briefings").upsert({
             id: lb.id,
             user_id: userId,
@@ -348,15 +399,17 @@ export async function performFullSyncAsync(): Promise<boolean> {
             like_count: lb.likeCount || 0,
             share_count: lb.shareCount || 0,
             updated_at: new Date().toISOString()
-          });
+          }, { signal } as any);
         }
       }
     }
 
-    // B. Sync from Local to Cloud (Local items that don't exist on cloud)
+    // B. Sync from Local to Cloud
     for (const [id, lb] of localBriefingsMap.entries()) {
+      if (signal.aborted) throw new Error('AbortError');
       if (!cloudBriefingsMap.has(id)) {
         console.log(`[Sync] Uploading local briefing ${id} to cloud...`);
+        if (signal.aborted) throw new Error('AbortError');
         await supabase.from("briefings").upsert({
           id: lb.id,
           user_id: userId,
@@ -367,13 +420,21 @@ export async function performFullSyncAsync(): Promise<boolean> {
           like_count: lb.likeCount || 0,
           share_count: lb.shareCount || 0,
           updated_at: new Date().toISOString()
-        });
+        }, { signal } as any);
       }
     }
 
+    // Hoàn thành thành công
+    currentSyncAbortController = null;
     console.log("[Sync] Full cloud-local synchronization completed successfully.");
     return true;
+
   } catch (err: any) {
+    if (err.message === 'AbortError') {
+      console.warn("[Sync] Synchronization aborted by user.");
+      // Không coi là lỗi, trả về false
+      return false;
+    }
     console.error("[Sync] Error performing full synchronization:", err);
     if (err && (err.code === "42P01" || (err.message && err.message.includes("relation") && err.message.includes("does not exist")))) {
       console.warn(
@@ -417,6 +478,11 @@ export async function performFullSyncAsync(): Promise<boolean> {
       );
     }
     return false;
+  } finally {
+    // Nếu controller vẫn là controller hiện tại, giải phóng
+    if (currentSyncAbortController === controller) {
+      currentSyncAbortController = null;
+    }
   }
 }
 
@@ -428,14 +494,13 @@ export async function syncSaveBriefingAsync(briefing: SavedSummary): Promise<voi
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
+    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    // Save to queue for when they log in
-    addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
+    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
     return;
   }
 
@@ -455,7 +520,7 @@ export async function syncSaveBriefingAsync(briefing: SavedSummary): Promise<voi
     console.log(`[Sync] Uploaded briefing ${briefing.id} directly to cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to upload briefing ${briefing.id} directly. Queuing...`, err);
-    addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
+    await addToSyncQueue({ type: "briefing", action: "save", targetId: briefing.id, data: briefing });
   }
 }
 
@@ -465,13 +530,13 @@ export async function syncDeleteBriefingAsync(id: string): Promise<void> {
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
+    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
+    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
     return;
   }
 
@@ -485,7 +550,7 @@ export async function syncDeleteBriefingAsync(id: string): Promise<void> {
     console.log(`[Sync] Deleted briefing ${id} directly from cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to delete briefing ${id} directly. Queuing...`, err);
-    addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
+    await addToSyncQueue({ type: "briefing", action: "delete", targetId: id });
   }
 }
 
@@ -495,13 +560,13 @@ export async function syncSavePreferencesAsync(preferences: UserPreferences): Pr
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "preferences", action: "save", data: preferences });
+    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "preferences", action: "save", data: preferences });
+    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
     return;
   }
 
@@ -515,7 +580,7 @@ export async function syncSavePreferencesAsync(preferences: UserPreferences): Pr
     console.log(`[Sync] Uploaded user preferences to cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to upload preferences. Queuing...`, err);
-    addToSyncQueue({ type: "preferences", action: "save", data: preferences });
+    await addToSyncQueue({ type: "preferences", action: "save", data: preferences });
   }
 }
 
@@ -525,13 +590,13 @@ export async function syncSaveVoiceHistoryAsync(item: Partial<VoiceHistoryItem>)
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
+    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
     return saved;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
+    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
     return saved;
   }
 
@@ -550,7 +615,7 @@ export async function syncSaveVoiceHistoryAsync(item: Partial<VoiceHistoryItem>)
     console.log(`[Sync] Uploaded voice history item ${saved.id} directly to cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to upload voice item. Queuing...`, err);
-    addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
+    await addToSyncQueue({ type: "voice_history", action: "save", targetId: saved.id, data: saved });
   }
 
   return saved;
@@ -562,13 +627,13 @@ export async function syncClearVoiceHistoryAsync(): Promise<void> {
 
   const supabase = await getSupabaseClientAsync();
   if (!isOnline() || !supabase) {
-    addToSyncQueue({ type: "voice_history", action: "clear" });
+    await addToSyncQueue({ type: "voice_history", action: "clear" });
     return;
   }
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session || !session.user) {
-    addToSyncQueue({ type: "voice_history", action: "clear" });
+    await addToSyncQueue({ type: "voice_history", action: "clear" });
     return;
   }
 
@@ -581,6 +646,6 @@ export async function syncClearVoiceHistoryAsync(): Promise<void> {
     console.log(`[Sync] Cleared voice history directly from cloud.`);
   } catch (err) {
     console.warn(`[Sync] Failed to clear voice history. Queuing...`, err);
-    addToSyncQueue({ type: "voice_history", action: "clear" });
+    await addToSyncQueue({ type: "voice_history", action: "clear" });
   }
 }

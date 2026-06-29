@@ -24,10 +24,11 @@ import { useUserPreferences } from "./UserPreferencesProvider";
 import DrivingMode from "./DrivingMode";
 import { motion, AnimatePresence } from "motion/react";
 import ShareModal from "./ShareModal";
+import { ClearDataButton } from './ClearDataButton';
 
 interface ManualPcmPlayerProps {
   payload: SummaryPayload;
-  audioChunks: string[]; // Base64 audio per segment: [Intro, ...Chapters, Conclusion]
+  audioChunks: string[];
   title?: string;
   preferencesInfo?: string;
   uiLanguage?: "vi" | "en";
@@ -139,24 +140,6 @@ export default function ManualPcmPlayer({
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
-  
-  // ===== FIX 2: Pitch Correction Variables =====
-  const pitchShiftNodeRef = useRef<any>(null); // Bypass for now, we use a simpler approach
-  
-  // ===== FIX 1: Cải thiện giọng phát thanh viên với equalizer =====
-  const eqNodesRef = useRef<{ 
-    low: BiquadFilterNode | null; 
-    mid: BiquadFilterNode | null; 
-    high: BiquadFilterNode | null;
-    compressor: DynamicsCompressorNode | null;
-  }>({
-    low: null,
-    mid: null,
-    high: null,
-    compressor: null,
-  });
-
-  const [isHighQualityVoice, setIsHighQualityVoice] = useState(true);
 
   // Background Music & Jingle Variables
   const [isBgMusicEnabled, setIsBgMusicEnabled] = useState(false);
@@ -165,6 +148,7 @@ export default function ManualPcmPlayer({
   const bgGainRef = useRef<GainNode | null>(null);
 
   const [volume, setVolume] = useState<number>(0.9);
+  const [isHighQualityVoice, setIsHighQualityVoice] = useState(true);
   const [frequencyData, setFrequencyData] = useState<number[]>(new Array(32).fill(12));
   const [copied, setCopied] = useState(false);
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
@@ -186,199 +170,174 @@ export default function ManualPcmPlayer({
     { type: "outro", title: "Signing Off", text: payload.conclusion, bullets: [] as string[] }
   ];
 
-  // ===== FIX 1: Tạo Equalizer cho giọng phát thanh =====
-  const createVoiceEnhancer = (audioCtx: AudioContext) => {
+// Initialize audio buffer
+useEffect(() => {
+  let active = true;
+
+  const initAudio = async () => {
+    if (!audioChunks || audioChunks.length === 0) {
+      setSegmentOffsets([]);
+      setTotalDuration(0);
+      mainBufferRef.current = null;
+      return;
+    }
+
+    // ===== LOẠI BỎ DUPLICATE CHUNKS =====
+    const uniqueChunks: string[] = [];
+    const seen = new Set<string>();
+    for (const chunk of audioChunks) {
+      if (!seen.has(chunk)) {
+        seen.add(chunk);
+        uniqueChunks.push(chunk);
+      }
+    }
+    if (uniqueChunks.length !== audioChunks.length) {
+      console.warn(
+        `[ManualPcmPlayer] ⚠️ Found ${audioChunks.length - uniqueChunks.length} duplicate chunks. Original: ${audioChunks.length}, Unique: ${uniqueChunks.length}`
+      );
+    }
+    
+    const chunksToProcess = uniqueChunks;
+     console.log(`[ManualPcmPlayer] Chunks to process: ${chunksToProcess.length}`);
+    
+    stopAudio();
+    setIsPlaying(false);
+    setCurrentTime(0);
+    elapsedOffsetRef.current = 0;
+
     try {
-      // Low shelf - tăng âm trầm cho giọng ấm áp
-      const lowFilter = audioCtx.createBiquadFilter();
-      lowFilter.type = "lowshelf";
-      lowFilter.frequency.value = 200;
-      lowFilter.gain.value = 3.0; // Tăng bass nhẹ cho giọng ấm
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = audioCtx;
 
-      // Mid band - tăng mid cho giọng rõ ràng
-      const midFilter = audioCtx.createBiquadFilter();
-      midFilter.type = "peaking";
-      midFilter.frequency.value = 800;
-      midFilter.Q.value = 1.0;
-      midFilter.gain.value = 4.0; // Tăng mid cho giọng rõ ràng
+      const decodedBuffers: AudioBuffer[] = [];
 
-      // High shelf - tăng treble cho giọng sáng
-      const highFilter = audioCtx.createBiquadFilter();
-      highFilter.type = "highshelf";
-      highFilter.frequency.value = 4000;
-      highFilter.gain.value = 2.0; // Tăng treble nhẹ cho giọng sáng
+      for (let i = 0; i < chunksToProcess.length; i++) {
+        if (!active) return;
+        const chunk = chunksToProcess[i];
+        const arrayBuffer = base64ToArrayBuffer(chunk);
 
-      // Compressor - giúp giọng đều, chuyên nghiệp
-      const compressor = audioCtx.createDynamicsCompressor();
-      compressor.threshold.value = -20;
-      compressor.knee.value = 10;
-      compressor.ratio.value = 3;
-      compressor.attack.value = 0.005;
-      compressor.release.value = 0.1;
+        try {
+          let decoded = await audioCtx.decodeAudioData(arrayBuffer);
+          
+          if (decoded.sampleRate !== 24000) {
+            const targetRate = 24000;
+            const ratio = targetRate / decoded.sampleRate;
+            const newLength = Math.round(decoded.length * ratio);
+            const newBuffer = audioCtx.createBuffer(
+              decoded.numberOfChannels,
+              newLength,
+              targetRate
+            );
+            for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+              const srcData = decoded.getChannelData(ch);
+              const dstData = newBuffer.getChannelData(ch);
+              for (let j = 0; j < newLength; j++) {
+                const srcIdx = j / ratio;
+                const idx0 = Math.floor(srcIdx);
+                const idx1 = Math.min(idx0 + 1, srcData.length - 1);
+                const frac = srcIdx - idx0;
+                dstData[j] = srcData[idx0] * (1 - frac) + srcData[idx1] * frac;
+              }
+            }
+            decoded = newBuffer;
+          }
+          
+          if (decoded.numberOfChannels > 1) {
+            const monoBuffer = audioCtx.createBuffer(1, decoded.length, decoded.sampleRate);
+            const monoData = monoBuffer.getChannelData(0);
+            for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+              const chData = decoded.getChannelData(ch);
+              for (let j = 0; j < decoded.length; j++) {
+                monoData[j] += chData[j] / decoded.numberOfChannels;
+              }
+            }
+            decoded = monoBuffer;
+          }
+          
+          decodedBuffers.push(decoded);
+          console.log(`[ManualPcmPlayer] Chunk ${i} duration: ${decoded.duration.toFixed(2)}s, sampleRate: ${decoded.sampleRate}Hz`);
+          
+        } catch (decodeErr) {
+          console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
+          try {
+            const rawPCM = base64ToArrayBuffer(chunk);
+            const floatArray = pcmToFloat32(rawPCM);
+            const fallbackBuf = audioCtx.createBuffer(1, floatArray.length, 24000);
+            fallbackBuf.getChannelData(0).set(floatArray);
+            decodedBuffers.push(fallbackBuf);
+          } catch (pcmErr) {
+            console.error(`[ManualPcmPlayer] Fallback PCM decoding also failed for chunk ${i + 1}:`, pcmErr);
+          }
+        }
+      }
+      console.log(`[ManualPcmPlayer] Decoded buffers count: ${decodedBuffers.length}`);
+      
+      if (!active) return;
+      if (decodedBuffers.length === 0) {
+        throw new Error("No audio chunks could be decoded successfully.");
+      }
 
-      // Kết nối chain: low → mid → high → compressor
-      lowFilter.connect(midFilter);
-      midFilter.connect(highFilter);
-      highFilter.connect(compressor);
+      const sampleRate = decodedBuffers[0].sampleRate;
+      const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
+      const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s pause cho tự nhiên
+      console.log(`[ManualPcmPlayer] Pause samples: ${pauseSamples}, pause duration: ${(pauseSamples / sampleRate).toFixed(2)}s`);
+      
+      let totalSamples = 0;
+      const offsets: { start: number; end: number }[] = [];
 
-      eqNodesRef.current = {
-        low: lowFilter,
-        mid: midFilter,
-        high: highFilter,
-        compressor: compressor,
-      };
+      decodedBuffers.forEach((buf, idx) => {
+        const startSec = totalSamples / sampleRate;
+        const durationSamples = Math.round(buf.duration * sampleRate);
+        totalSamples += durationSamples;
+        const endSec = totalSamples / sampleRate;
+        offsets.push({ start: startSec, end: endSec });
+        
+        if (idx < decodedBuffers.length - 1) {
+          totalSamples += pauseSamples;
+        }
+      });
 
-      return { lowFilter, midFilter, highFilter, compressor };
+      if (!active) return;
+      setSegmentOffsets(offsets);
+      
+      const calculatedDuration = totalSamples / sampleRate;
+      setTotalDuration(calculatedDuration);
+      console.log(`[ManualPcmPlayer] Total duration: ${calculatedDuration.toFixed(2)}s, Samples: ${totalSamples}, Rate: ${sampleRate}Hz`);
+
+      const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const outputChannel = unifiedBuffer.getChannelData(channel);
+        let writeOffset = 0;
+        decodedBuffers.forEach((buf, idx) => {
+          const bufSamples = Math.round(buf.duration * sampleRate);
+          if (channel < buf.numberOfChannels) {
+            const srcData = buf.getChannelData(channel);
+            const copyLength = Math.min(srcData.length, bufSamples);
+            outputChannel.set(srcData.subarray(0, copyLength), writeOffset);
+          }
+          writeOffset += bufSamples;
+          if (idx < decodedBuffers.length - 1) {
+            writeOffset += pauseSamples;
+          }
+        });
+      }
+
+      mainBufferRef.current = unifiedBuffer;
+
     } catch (err) {
-      console.warn("Failed to create voice enhancer:", err);
-      return null;
+      console.error("Failed to construct audio buffer:", err);
     }
   };
 
-  // Initialize audio buffer with validation
-  useEffect(() => {
-    let active = true;
+  initAudio();
 
-    const initAudio = async () => {
-      if (!audioChunks || audioChunks.length === 0) {
-        setSegmentOffsets([]);
-        setTotalDuration(0);
-        mainBufferRef.current = null;
-        return;
-      }
+  return () => {
+    active = false;
+    stopAudio();
+  };
+}, [audioChunks]);
 
-      stopAudio();
-      setIsPlaying(false);
-      setCurrentTime(0);
-      elapsedOffsetRef.current = 0;
-
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioCtxRef.current = audioCtx;
-
-        const decodedBuffers: AudioBuffer[] = [];
-
-        for (let i = 0; i < audioChunks.length; i++) {
-          if (!active) return;
-          const chunk = audioChunks[i];
-          const arrayBuffer = base64ToArrayBuffer(chunk);
-
-          try {
-            let decoded = await audioCtx.decodeAudioData(arrayBuffer);
-            
-            if (decoded.sampleRate !== 24000) {
-              const targetRate = 24000;
-              const ratio = targetRate / decoded.sampleRate;
-              const newLength = Math.round(decoded.length * ratio);
-              const newBuffer = audioCtx.createBuffer(
-                decoded.numberOfChannels,
-                newLength,
-                targetRate
-              );
-              for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-                const srcData = decoded.getChannelData(ch);
-                const dstData = newBuffer.getChannelData(ch);
-                for (let j = 0; j < newLength; j++) {
-                  const srcIdx = j / ratio;
-                  const idx0 = Math.floor(srcIdx);
-                  const idx1 = Math.min(idx0 + 1, srcData.length - 1);
-                  const frac = srcIdx - idx0;
-                  dstData[j] = srcData[idx0] * (1 - frac) + srcData[idx1] * frac;
-                }
-              }
-              decoded = newBuffer;
-            }
-            
-            if (decoded.numberOfChannels > 1) {
-              const monoBuffer = audioCtx.createBuffer(1, decoded.length, decoded.sampleRate);
-              const monoData = monoBuffer.getChannelData(0);
-              for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-                const chData = decoded.getChannelData(ch);
-                for (let j = 0; j < decoded.length; j++) {
-                  monoData[j] += chData[j] / decoded.numberOfChannels;
-                }
-              }
-              decoded = monoBuffer;
-            }
-            
-            decodedBuffers.push(decoded);
-          } catch (decodeErr) {
-            console.warn(`[ManualPcmPlayer] Standard decodeAudioData failed for chunk ${i + 1}, trying raw PCM fallback...`, decodeErr);
-            try {
-              const rawPCM = base64ToArrayBuffer(chunk);
-              const floatArray = pcmToFloat32(rawPCM);
-              const fallbackBuf = audioCtx.createBuffer(1, floatArray.length, 24000);
-              fallbackBuf.getChannelData(0).set(floatArray);
-              decodedBuffers.push(fallbackBuf);
-            } catch (pcmErr) {
-              console.error(`[ManualPcmPlayer] Fallback PCM decoding also failed for chunk ${i + 1}:`, pcmErr);
-            }
-          }
-        }
-
-        if (!active) return;
-        if (decodedBuffers.length === 0) {
-          throw new Error("No audio chunks could be decoded successfully.");
-        }
-
-        const sampleRate = decodedBuffers[0].sampleRate;
-        const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-        const pauseSamples = Math.round(sampleRate * 0.8); // 0.8s pause cho tự nhiên hơn
-        
-        let totalSamples = 0;
-        const offsets: { start: number; end: number }[] = [];
-
-        decodedBuffers.forEach((buf, idx) => {
-          const startSec = totalSamples / sampleRate;
-          const durationSamples = Math.round(buf.duration * sampleRate);
-          totalSamples += durationSamples;
-          const endSec = totalSamples / sampleRate;
-          offsets.push({ start: startSec, end: endSec });
-          
-          if (idx < decodedBuffers.length - 1) {
-            totalSamples += pauseSamples;
-          }
-        });
-
-        if (!active) return;
-        setSegmentOffsets(offsets);
-        setTotalDuration(totalSamples / sampleRate);
-
-        const unifiedBuffer = audioCtx.createBuffer(numberOfChannels, totalSamples, sampleRate);
-        for (let channel = 0; channel < numberOfChannels; channel++) {
-          const outputChannel = unifiedBuffer.getChannelData(channel);
-          let writeOffset = 0;
-          decodedBuffers.forEach((buf, idx) => {
-            const bufSamples = Math.round(buf.duration * sampleRate);
-            if (channel < buf.numberOfChannels) {
-              const srcData = buf.getChannelData(channel);
-              const copyLength = Math.min(srcData.length, bufSamples);
-              outputChannel.set(srcData.subarray(0, copyLength), writeOffset);
-            }
-            writeOffset += bufSamples;
-            if (idx < decodedBuffers.length - 1) {
-              writeOffset += pauseSamples;
-            }
-          });
-        }
-
-        mainBufferRef.current = unifiedBuffer;
-        console.log(`[ManualPcmPlayer] Successfully decoded and concatenated ${decodedBuffers.length} audio segments. Total duration: ${(totalSamples / sampleRate).toFixed(2)}s.`);
-
-      } catch (err) {
-        console.error("Failed to construct audio buffer:", err);
-      }
-    };
-
-    initAudio();
-
-    return () => {
-      active = false;
-      stopAudio();
-    };
-  }, [audioChunks]);
-
-  // ===== FIX 2: Cải thiện playAudio với pitch correction =====
+  // ===== FIX: Cải thiện playAudio với timing chính xác =====
   const playAudio = (offset: number) => {
     if (!mainBufferRef.current || !audioCtxRef.current) return;
 
@@ -391,18 +350,10 @@ export default function ManualPcmPlayer({
     const audioCtx = audioCtxRef.current;
     const source = audioCtx.createBufferSource();
     source.buffer = mainBufferRef.current;
-    source.playbackRate.value = playbackRate;
-
-    // ===== FIX 1: Tạo Equalizer cho giọng phát thanh =====
-    const enhancer = createVoiceEnhancer(audioCtx);
-    const { low, mid, high, compressor } = eqNodesRef.current;
-
-    // ===== FIX 2: Pitch Correction để giữ nguyên giọng khi thay đổi tốc độ =====
-    // Sử dụng kỹ thuật: Nếu playbackRate ≠ 1, điều chỉnh detune để giữ pitch
-    // (Web Audio API không hỗ trợ detune cho BufferSource, 
-    //  nhưng chúng ta có thể sử dụng workaround với oscillator hoặc chấp nhận chất lượng thấp hơn)
-    // Giải pháp đơn giản: Giới hạn playbackRate ở mức không làm biến dạng giọng quá nhiều
-    // Và thêm thông báo cho user
+    
+    // ===== FIX: Giới hạn rate để tránh biến dạng giọng quá nhiều =====
+    const safeRate = Math.max(0.6, Math.min(2.5, playbackRate));
+    source.playbackRate.value = safeRate;
     
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 64;
@@ -413,63 +364,109 @@ export default function ManualPcmPlayer({
     gainNode.gain.value = volume;
     gainNodeRef.current = gainNode;
 
-    // ===== FIX 1: Kết nối chain với EQ =====
-    // Source → Analyser → Low → Mid → High → Compressor → Gain → Destination
     source.connect(analyser);
-    
-    if (isHighQualityVoice && low && mid && high && compressor) {
-      // Dùng EQ chain
-      analyser.connect(low);
-      // low → mid → high → compressor đã được connect trong createVoiceEnhancer
-      compressor.connect(gainNode);
-    } else {
-      // Bỏ qua EQ
-      analyser.connect(gainNode);
-    }
-    
+    analyser.connect(gainNode);
     gainNode.connect(audioCtx.destination);
 
     const safeOffset = Math.max(0, Math.min(offset, totalDuration));
     
+    // ===== FIX: Lưu timing chính xác =====
+    const startTime = audioCtx.currentTime;
     source.start(0, safeOffset);
     sourceNodeRef.current = source;
 
-    startTimeCtxRef.current = audioCtx.currentTime;
+    startTimeCtxRef.current = startTime;
     elapsedOffsetRef.current = safeOffset;
     setIsPlaying(true);
   };
 
-  // ===== FIX 2: Cập nhật playback rate và pitch =====
+  // ===== FIX: Cập nhật timing khi thay đổi playback rate =====
   useEffect(() => {
     if (sourceNodeRef.current && isPlaying) {
-      // Khi thay đổi rate, chúng ta cần restart để tránh biến dạng giọng
+      // Lưu vị trí hiện tại và restart với rate mới
       const currentOffset = currentTime;
       stopAudio();
       playAudio(currentOffset);
     }
   }, [playbackRate]);
 
-  // ===== FIX 2: Không cho phép rate quá thấp hoặc quá cao =====
-  const handleRateChange = (rate: number) => {
-    // Giới hạn rate để không làm biến dạng giọng quá nhiều
-    // 0.75x vẫn giữ giọng tương đối, nhưng có thể hơi trầm hơn
-    // Để giữ nguyên pitch, cần dùng pitch shift, nhưng phức tạp
-    // Giải pháp: Giới hạn từ 0.7x đến 2.0x và thông báo cho user
-    if (rate < 0.7) {
-      alert(uiLanguage === "vi" 
-        ? "Tốc độ quá chậm có thể làm biến dạng giọng. Khuyến nghị từ 0.75x đến 2.0x." 
-        : "Speed too slow may distort voice. Recommended 0.75x to 2.0x.");
-      return;
-    }
-    setPlaybackRate(rate);
+  // ===== FIX: Theo dõi progress với timing chính xác =====
+  const startTrackingProgress = () => {
+    if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
+
+    const updateProgress = () => {
+      if (!audioCtxRef.current || !isPlaying) return;
+
+      const now = audioCtxRef.current.currentTime;
+      
+      // ===== FIX: Tính elapsed với rate hiện tại =====
+      let elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * playbackRate;
+      
+      // Giới hạn trong khoảng hợp lệ
+      elapsedSeconds = Math.max(0, Math.min(elapsedSeconds, totalDuration));
+
+      if (elapsedSeconds >= totalDuration - 0.05) {
+        setCurrentTime(totalDuration);
+        setIsPlaying(false);
+        stopAudio();
+        elapsedOffsetRef.current = 0;
+        setActiveSegmentIndex(0);
+        activeSegmentIndexRef.current = 0;
+        return;
+      }
+
+      setCurrentTime(elapsedSeconds);
+
+      // Tìm segment active
+      const activeIdx = segmentOffsets.findIndex(
+        (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
+      );
+      if (activeIdx !== -1) {
+        if (activeIdx !== activeSegmentIndexRef.current) {
+          activeSegmentIndexRef.current = activeIdx;
+          setActiveSegmentIndex(activeIdx);
+        }
+      }
+
+      if (analyserRef.current) {
+        const dataArr = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArr);
+        const values: number[] = [];
+        for (let i = 0; i < 32; i++) {
+          const weight = i < 8 ? 1.0 : i < 16 ? 1.3 : 1.6;
+          values.push(Math.min(255, (dataArr[i] || 0) * weight));
+        }
+        setFrequencyData(values);
+      }
+
+      animFrameIdRef.current = requestAnimationFrame(updateProgress);
+    };
+
+    animFrameIdRef.current = requestAnimationFrame(updateProgress);
   };
 
-  // ===== FIX 1: Jingle với EQ =====
+  const stopTrackingProgress = () => {
+    if (animFrameIdRef.current) {
+      cancelAnimationFrame(animFrameIdRef.current);
+      animFrameIdRef.current = null;
+    }
+  };
+
+  const stopAudio = () => {
+    stopTrackingProgress();
+    if (sourceNodeRef.current) {
+      try {
+        sourceNodeRef.current.stop();
+      } catch (err) {}
+      sourceNodeRef.current = null;
+    }
+  };
+
   const playJingle = () => {
     if (!audioCtxRef.current) return;
     try {
       const now = audioCtxRef.current.currentTime;
-      const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+      const notes = [523.25, 659.25, 783.99, 1046.50];
       const noteDurations = [0.1, 0.1, 0.1, 0.3];
 
       notes.forEach((freq, idx) => {
@@ -568,71 +565,6 @@ export default function ManualPcmPlayer({
     }
   }, [bgMusicVolume, volume]);
 
-  const startTrackingProgress = () => {
-    if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
-
-    const updateProgress = () => {
-      if (!audioCtxRef.current || !isPlaying) return;
-
-      const now = audioCtxRef.current.currentTime;
-      const elapsedSeconds = elapsedOffsetRef.current + (now - startTimeCtxRef.current) * playbackRate;
-
-      if (elapsedSeconds >= totalDuration) {
-        setCurrentTime(totalDuration);
-        setIsPlaying(false);
-        stopAudio();
-        elapsedOffsetRef.current = 0;
-        setActiveSegmentIndex(0);
-        activeSegmentIndexRef.current = 0;
-        return;
-      }
-
-      setCurrentTime(elapsedSeconds);
-
-      const activeIdx = segmentOffsets.findIndex(
-        (offset) => elapsedSeconds >= offset.start && elapsedSeconds <= offset.end
-      );
-      if (activeIdx !== -1) {
-        if (activeIdx !== activeSegmentIndexRef.current) {
-          activeSegmentIndexRef.current = activeIdx;
-          setActiveSegmentIndex(activeIdx);
-        }
-      }
-
-      if (analyserRef.current) {
-        const dataArr = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(dataArr);
-        const values: number[] = [];
-        for (let i = 0; i < 32; i++) {
-          const weight = i < 8 ? 1.0 : i < 16 ? 1.3 : 1.6;
-          values.push(Math.min(255, (dataArr[i] || 0) * weight));
-        }
-        setFrequencyData(values);
-      }
-
-      animFrameIdRef.current = requestAnimationFrame(updateProgress);
-    };
-
-    animFrameIdRef.current = requestAnimationFrame(updateProgress);
-  };
-
-  const stopTrackingProgress = () => {
-    if (animFrameIdRef.current) {
-      cancelAnimationFrame(animFrameIdRef.current);
-      animFrameIdRef.current = null;
-    }
-  };
-
-  const stopAudio = () => {
-    stopTrackingProgress();
-    if (sourceNodeRef.current) {
-      try {
-        sourceNodeRef.current.stop();
-      } catch (err) {}
-      sourceNodeRef.current = null;
-    }
-  };
-
   useEffect(() => {
     if (isPlaying) {
       startTrackingProgress();
@@ -661,6 +593,24 @@ export default function ManualPcmPlayer({
     }
     return () => clearInterval(interval);
   }, [isPlaying]);
+
+  // ===== FIX: Xử lý rate change với giới hạn =====
+  const handleRateChange = (rate: number) => {
+    // Giới hạn rate để tránh biến dạng giọng quá nhiều
+    if (rate < 0.6) {
+      alert(uiLanguage === "vi" 
+        ? "Tốc độ quá chậm có thể làm biến dạng giọng. Khuyến nghị từ 0.75x đến 2.0x." 
+        : "Speed too slow may distort voice. Recommended 0.75x to 2.0x.");
+      return;
+    }
+    if (rate > 2.5) {
+      alert(uiLanguage === "vi" 
+        ? "Tốc độ quá nhanh có thể làm biến dạng giọng. Khuyến nghị từ 0.75x đến 2.0x." 
+        : "Speed too fast may distort voice. Recommended 0.75x to 2.0x.");
+      return;
+    }
+    setPlaybackRate(rate);
+  };
 
   const handlePlayPause = () => {
     if (isPlaying) {
@@ -968,7 +918,7 @@ export default function ManualPcmPlayer({
         {/* Controls Layout */}
         <div className="relative z-10 flex flex-wrap justify-between items-center gap-4 pt-1 border-t border-slate-800/80">
           
-          {/* Rate speed selector - CẢI TIẾN: Giới hạn rate và thêm tooltip */}
+          {/* Rate speed selector */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-slate-500 font-mono uppercase mr-1">{pt.speed}</span>
             <div className="bg-slate-800/80 p-0.5 rounded-lg flex border border-slate-700/40">
@@ -1065,7 +1015,7 @@ export default function ManualPcmPlayer({
           </button>
         </div>
 
-        {/* ===== FIX 1: Voice Quality Toggle ===== */}
+        {/* ===== FIX: Voice Quality Toggle ===== */}
         <div className="relative z-10 mt-4 flex justify-between items-center border-t border-slate-800/80 pt-3">
           <div className="flex items-center gap-3">
             <span className="text-[10px] text-slate-500 font-mono uppercase">Giọng phát thanh</span>
@@ -1202,6 +1152,24 @@ export default function ManualPcmPlayer({
           </div>
         </div>
 
+              {/* ===== QUẢN LÝ BỘ NHỚ BẢN TIN ===== */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mt-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h5 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <span className="text-lg">💾</span>
+                Quản lý bộ nhớ bản tin
+              </h5>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Xóa dữ liệu cục bộ (chỉ trên máy này) để giải phóng bộ nhớ.
+              </p>
+            </div>
+            <div className="flex-shrink-0">
+              <ClearDataButton />
+            </div>
+          </div>
+        </div>
+        
         {/* Sharing Utility Group */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <button

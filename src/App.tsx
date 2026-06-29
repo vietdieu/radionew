@@ -604,7 +604,7 @@ const requestNotificationPermission = async () => {
   const { toggleDrivingMode, toast: drivingToast, clearToast: clearDrivingToast } = useDrivingMode(uiLanguage);
 
   // Cloud Sync Status using Supabase Auth & DB Sync
-  const { user, syncStatus, isOnline: syncOnline, triggerSync } = useSync();
+   const { user, syncStatus, isOnline: syncOnline, triggerSync, abortSync } = useSync();
 
   // Storage historical commutes managed via IndexedDB & useBriefcase
   const {
@@ -1223,6 +1223,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               syncStatus={syncStatus}
               isOnline={syncOnline}
               onSync={triggerSync}
+              onAbortSync={abortSync}   // <-- Truyền hàm hủy
               uiLanguage={uiLanguage}
             />
 

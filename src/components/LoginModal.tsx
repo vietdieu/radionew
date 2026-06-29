@@ -139,8 +139,8 @@ export default function LoginModal({ isOpen, onClose, uiLanguage }: LoginModalPr
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          // Điền chính xác đường link web thật của bạn vào đây:
-          redirectTo: "https://pthanhnew.onrender.com/"
+          // Tự động lấy địa chỉ trang web hiện tại, không cần sửa lại mỗi khi đổi tên miền:
+          redirectTo: window.location.origin
         }
       });
       if (error) {
