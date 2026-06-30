@@ -12,6 +12,7 @@ import { TextToSpeechClient } from "@google-cloud/text-to-speech";
 import { v4 as uuidv4 } from "uuid";
 import xml2js from "xml2js";
 import { createClient } from "@supabase/supabase-js";
+import { BroadcastSpeechEngine } from "./src/services/broadcastSpeechEngine";
 
 dotenv.config();
 
@@ -1074,7 +1075,21 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       return res.status(400).json({ error: "No text provided for audio synthesis." });
     }
 
-    const chunks = chunkTextForTTS(text, 250);
+    // ----------------------------------------------------
+    // BROADCAST SPEECH ENGINE (Spoken Adaptation)
+    // ----------------------------------------------------
+    let engineeredText = text;
+    try {
+      engineeredText = await callGeminiWithRotation(async (ai) => {
+        return await BroadcastSpeechEngine.process(text, voice || "en-US", tone || "conversational", ai);
+      });
+      console.log(`[TTS-DEBUG] BroadcastSpeechEngine successfully processed the text. New length: ${engineeredText.length}`);
+    } catch (engineErr: any) {
+      console.warn("[TTS-DEBUG] AI-driven BroadcastSpeechEngine failed. Falling back to rules-based offline engine pipeline:", engineErr.message || engineErr);
+      engineeredText = await BroadcastSpeechEngine.process(text, voice || "en-US", tone || "conversational");
+    }
+
+    const chunks = chunkTextForTTS(engineeredText, 250);
     console.log(`[TTS-DEBUG] Number of chunks: ${chunks.length}`);
 
     const finalAudioBuffers: Buffer[] = [];
