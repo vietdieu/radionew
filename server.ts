@@ -2873,7 +2873,9 @@ async function serveApp() {
   if (process.env.NODE_ENV !== "production" || !hasDist) {
     console.log("[CommuteCast Backend] Starting Vite in middleware mode...");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true ,
+       hmr: false   // Tắt HMR để tránh WebSocket
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

@@ -66,7 +66,8 @@ import { PersonalMemory } from "./features/memory/PersonalMemory";
 import { PwaStatus } from "./features/pwa/PwaStatus";
 import { DownloadManager } from "./features/download/DownloadManager";
 import { SettingsCenter } from "./features/settings/SettingsCenter";
-import { addToQueue, getPlayQueue, getPersonalMemory } from "./features/store";
+import { addToQueue, getPlayQueue, getPersonalMemory, removeFromQueue, recordListeningSession } from "./features/store";
+import { useKeyboardShortcuts } from "./features/keyboard/useKeyboardShortcuts";
 import { Brain, ListMusic, ListPlus, Settings } from "lucide-react";
 
 import TopicSuggestions from "./components/TopicSuggestions";
@@ -619,6 +620,33 @@ const requestNotificationPermission = async () => {
 
   const { preferences: userPref, updateVoice, updateLanguage, updateSpeed, updateDrivingMode } = useUserPreferences();
   const { toggleDrivingMode, toast: drivingToast, clearToast: clearDrivingToast } = useDrivingMode(uiLanguage);
+
+  // Setup keyboard shortcuts
+  useKeyboardShortcuts({
+    onTogglePlay: () => {
+      window.dispatchEvent(new CustomEvent("commutecast-toggle-play"));
+    },
+    onToggleDrivingMode: () => {
+      if (typeof updateDrivingMode === "function") {
+        updateDrivingMode(!userPref.isDrivingMode);
+      }
+    },
+    onFocusSearch: () => {
+      const searchInput = document.getElementById("rss-search-input");
+      if (searchInput) {
+        searchInput.focus();
+      }
+    },
+    onCloseDialog: () => {
+      setStep("idle");
+    },
+    onSeekBackward: () => {
+      window.dispatchEvent(new CustomEvent("commutecast-seek", { detail: { direction: "backward" } }));
+    },
+    onSeekForward: () => {
+      window.dispatchEvent(new CustomEvent("commutecast-seek", { detail: { direction: "forward" } }));
+    }
+  });
 
   // Cloud Sync Status using Supabase Auth & DB Sync
    const { user, syncStatus, isOnline: syncOnline, triggerSync, abortSync } = useSync();
@@ -1195,6 +1223,51 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
       }
     } catch (err) {
       console.error("Failed to load briefing details:", err);
+    }
+  };
+
+  const handlePlayerEnded = async () => {
+    // 1. Record listen session to statistics and AI memory
+    if (activePayload) {
+      const estimatedSeconds = activePayload.chapters.reduce(
+        (acc: number, ch: any) => acc + (ch.scriptText?.length || 0) * 0.08,
+        120
+      );
+      recordListeningSession(
+        Math.round(estimatedSeconds),
+        preferences.language === "bilingual" ? "bilingual" : preferences.language === "en" ? "en" : "vi",
+        activePayload.chapters[0]?.topic || "News",
+        "CommuteCast Podcast Feed"
+      );
+    }
+
+    // 2. Play next item in Smart Queue if available
+    const queue = getPlayQueue();
+    if (queue.length > 0) {
+      const nextItem = queue[0];
+      removeFromQueue(nextItem.id);
+
+      try {
+        let fullItem = await getEpisodeFromOffline(nextItem.id);
+        if (!fullItem) {
+          fullItem = await getFullBriefing(nextItem.id);
+        }
+        if (fullItem) {
+          setActivePayload(fullItem.payload);
+          setActiveAudioChunks(fullItem.audioChunks || []);
+          setActiveTitle(fullItem.payload.title);
+          setPreferences(fullItem.preferences);
+          setSelectedBriefId(fullItem.id);
+          setStep("ready");
+          
+          // Trigger custom event to start playing immediately
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("commutecast-toggle-play"));
+          }, 1000);
+        }
+      } catch (err) {
+        console.error("Failed to auto-play next queue item:", err);
+      }
     }
   };
 
@@ -1958,289 +2031,396 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         {/* Right Side: Active Player deck & historical playlists */}
         <section className="md:col-span-5 flex flex-col gap-6" id="output-panel-desktop">
           
-          {/* Active status loaders */}
-          {step === "summarizing" && (
-            <div className="bg-slate-900 text-white p-8 rounded-3xl border border-slate-800 text-center shadow-2xl flex flex-col items-center justify-center min-h-[310px]">
-              <div className="relative mb-6">
-                <div className="w-16 h-16 rounded-full border-4 border-cyan-500 border-t-transparent animate-spin" />
-                <Settings2 className="w-6 h-6 text-cyan-400 absolute top-5 left-5 animate-pulse" />
-              </div>
-              <h3 className="text-lg font-bold">{t.draftingTitle}</h3>
-              <p className="text-xs text-slate-400 mt-2.5 max-w-xs leading-relaxed mb-4">
-                {generationProgress}
-              </p>
-              {targetNewsTitle && (
-                <div className="w-full max-w-sm px-4 py-3 bg-slate-800/80 border border-slate-700/60 rounded-2xl text-left animate-fade-in">
-                  <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest block mb-1">
-                    {uiLanguage === "vi" ? "ĐANG SOẠN THẢO BẢN TIN:" : "COMPILING ARTICLE:"}
-                  </span>
-                  <p className="text-xs font-semibold text-slate-100 line-clamp-2 leading-relaxed">
-                    {targetNewsTitle}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {step === "synthesizing" && (
-            <div className="bg-slate-900 text-white p-8 rounded-3xl border border-slate-800 text-center shadow-2xl flex flex-col items-center justify-center min-h-[310px]">
-              <div className="relative mb-6">
-                <div className="w-16 h-16 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
-                <Volume2 className="w-6 h-6 text-amber-350 absolute top-5 left-5 animate-bounce" />
-              </div>
-              <h3 className="text-lg font-bold">{t.synthesizingTitle}</h3>
-              <p className="text-xs text-slate-400 mt-2.5 max-w-xs leading-relaxed mb-4">
-                {generationProgress}
-              </p>
-              {(activeTitle || targetNewsTitle) && (
-                <div className="w-full max-w-sm px-4 py-3 bg-slate-800/80 border border-slate-700/60 rounded-2xl text-left animate-fade-in">
-                  <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest block mb-1">
-                    {uiLanguage === "vi" ? "TIÊU ĐỀ BẢN TIN PHÁT THANH:" : "AUDIO BRIEFING TITLE:"}
-                  </span>
-                  <p className="text-xs font-semibold text-slate-150 line-clamp-2 leading-relaxed">
-                    {activeTitle || targetNewsTitle}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {step === "error" && (
-            <div className="bg-white p-6 rounded-2xl border border-rose-250 shadow-sm text-center">
-              <div className="w-12 h-12 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <AlertCircle className="w-6 h-6 text-rose-600" />
-              </div>
-              <h3 className="text-base font-bold text-slate-800">{t.failedTitle}</h3>
-              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                {errorMessage}
-              </p>
-              
-              {/* Intelligent suggestion for large RSS aggregations or TTS/Gemini errors */}
-              {isRssBasedGeneration && (
-                <div className="mt-4 p-3.5 bg-amber-50 rounded-2xl border border-amber-200/80 text-left text-xs text-amber-900 space-y-1.5 animate-fade-in">
-                  <p className="font-bold flex items-center gap-1.5 text-amber-950">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    <span>{uiLanguage === "vi" ? "Gợi ý khắc phục tối ưu:" : "Optimized troubleshooting tip:"}</span>
-                  </p>
-                  <p className="text-[11px] leading-relaxed text-amber-800">
-                    {uiLanguage === "vi" 
-                      ? "Nếu số lượng bài viết quá nhiều dẫn đến quá tải/hết hạn ngạch (Timeout/TTS engine error), hãy bấm nút đóng phía dưới để quay lại, sau đó dùng chức năng 'Tạo bản tin vắn tắt mới nhất từ nguồn tin RSS' để giới hạn số lượng tin (ví dụ: 5-10 tin mới nhất) hoặc lọc riêng tin tức của 'Hôm nay'."
-                      : "If aggregating too many articles causes timeout or quota limits, please reset and use the 'Generate Custom Brief from RSS' feature. You can easily limit the article count (e.g., 5-10 latest items) or filter exclusively for 'Today's' news to bypass constraints."}
-                  </p>
-                </div>
-              )}
-
-              <button
-                onClick={() => setStep("idle")}
-                className="mt-4 text-xs bg-slate-100 hover:bg-slate-200 text-slate-705 border border-slate-200 px-4 py-2 rounded-lg font-medium transition cursor-pointer"
-              >
-                {t.btnReset}
-              </button>
-            </div>
-          )}
-
-          {step === "idle" && (
-            <div className="bg-slate-100 border-2 border-dashed border-slate-300 rounded-3xl p-8 text-center flex flex-col items-center justify-center min-h-[310px] relative overflow-hidden">
-              <Compass className="w-10 h-10 text-slate-400 mb-3 animate-pulse" />
-              <h3 className="text-sm font-bold text-slate-700">{t.idleTitle}</h3>
-              <p className="text-xs text-slate-500 mt-2 max-w-xs leading-relaxed">
-                {t.idleSub}
-              </p>
-            </div>
-          )}
-
-          {step === "ready" && activePayload && (
-            <ManualPcmPlayer
-              payload={activePayload}
-              audioChunks={activeAudioChunks}
-              title={activeTitle}
-              briefingId={selectedBriefId}
-              preferencesInfo={`${
-                preferences.voice === "vi-HN" 
-                  ? (uiLanguage === "vi" ? "Giọng Hà Nội" : "Hanoi Accent") 
-                  : preferences.voice === "vi-HCM" 
-                  ? (uiLanguage === "vi" ? "Giọng TP. HCM" : "HCM Accent") 
-                  : preferences.voice === "en-UK"
-                  ? (uiLanguage === "vi" ? "Giọng Anh-Anh (RP)" : "UK Accent (RP)")
-                  : preferences.voice === "en-US"
-                  ? (uiLanguage === "vi" ? "Giọng Anh-Mỹ (GA)" : "US Accent (GA)")
-                  : `${preferences.voice} Host`
-              } • ${preferences.language === "bilingual" ? "Song Ngữ EN-VI" : preferences.language === "vi" ? "Tiếng Việt" : "English Mode"}`}
-              uiLanguage={uiLanguage}
-            />
-          )}
-
-          {/* Trending Popular Briefings Leaderboard */}
-          <TrendingBriefings
-            savedBriefings={savedBriefings}
-            onSelectBriefing={handleApplyHistoryBriefing}
-            onRefreshList={() => refreshBriefings(false)}
-            uiLanguage={uiLanguage}
-          />
-
-          {/* Interactive Pre-defined Samples */}
-          <SampleBriefings
-            saveNewBriefing={saveNewBriefing}
-            onPlaySample={handleApplyHistoryBriefing}
-            uiLanguage={uiLanguage}
-          />
-
-          {/* Real-time Storage stats warning and usage meters */}
-          <StorageStats
-            usedMB={storageUsage.usedMB}
-            totalItems={savedBriefings.length}
-            onClearAll={clearAllBriefings}
-            uiLanguage={uiLanguage}
-          />
-
-          {/* Local commute playlist drive list & Podcast tab container */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
-            <div className="flex justify-between items-center border-b border-slate-150 pb-2.5">
-              <div className="flex gap-4">
-                <button
-                  onClick={() => setActiveHistoryTab("history")}
-                  className={`pb-2 text-xs sm:text-sm font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeHistoryTab === "history"
-                      ? "border-cyan-600 text-cyan-700"
-                      : "border-transparent text-slate-400 hover:text-slate-600"
-                  }`}
-                >
-                  <History className="w-4 h-4" />
-                  <span>{uiLanguage === "vi" ? "Lịch sử bản tin" : "Briefing History"}</span>
-                </button>
-                <button
-                  onClick={() => setActiveHistoryTab("podcast")}
-                  className={`pb-2 text-xs sm:text-sm font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeHistoryTab === "podcast"
-                      ? "border-cyan-600 text-cyan-700"
-                      : "border-transparent text-slate-400 hover:text-slate-600"
-                  }`}
-                >
-                  <Podcast className="w-4 h-4" />
-                  <span>{uiLanguage === "vi" ? "Đăng tải Podcast" : "Podcast Publish"}</span>
-                </button>
-              </div>
-
-              {activeHistoryTab === "history" && (
-                <div className="hidden sm:flex items-center gap-1.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
-                  <span>
-                    {uiLanguage === "vi" 
-                      ? `Bản tin: ${savedBriefings.length}` 
-                      : `Briefings: ${savedBriefings.length}`}
-                  </span>
-                  <span>•</span>
-                  <span>
-                    {uiLanguage === "vi" 
-                      ? `Đã dùng: ${storageUsage.usedMB.toFixed(1)}MB` 
-                      : `Used: ${storageUsage.usedMB.toFixed(1)}MB`}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {activeHistoryTab === "history" ? (
-              savedBriefings.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-                  <p className="text-xs font-bold text-slate-500">{t.historyEmpty}</p>
-                  <p className="text-[10px] text-slate-400 mt-1">{t.historyEmptySub}</p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2.5 max-h-[380px] overflow-y-auto pr-1">
-                  {savedBriefings.map((item) => {
-                    const itemLanguage = item.preferences.language || "bilingual";
-                    
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => handleApplyHistoryBriefing(item)}
-                        className="p-3.5 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl transition cursor-pointer flex justify-between items-start gap-4 group text-left"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 mb-1.5">
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-750 uppercase">
-                              {itemLanguage}
-                            </span>
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 capitalize">
-                              {item.preferences.targetDuration}
-                            </span>
-                          </div>
-                          <h4 className="text-xs font-bold text-slate-800 truncate">
-                            {item.payload.title}
-                          </h4>
-                          <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1.5 font-mono">
-                            <span>🕒 {item.timestamp}</span>
-                          </p>
-                          <div className="flex items-center gap-2 mt-2">
-                            {/* Like Button */}
-                            <button
-                              type="button"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                await incrementBriefingLikes(item.id);
-                                refreshBriefings(false);
-                                // Ghi nhận tương tác like cho từng chủ đề trong chương
-                                item.payload?.chapters?.forEach((ch: any) => {
-                                  if (ch.topic) {
-                                    recordInteraction(ch.topic, "like", ch.id || item.id).catch((err) =>
-                                      console.error("Failed to record like interaction:", err)
-                                    );
-                                  }
-                                });
-                              }}
-                              className="text-[10px] text-slate-550 hover:text-rose-600 font-bold bg-white hover:bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 transition-all flex items-center gap-1 cursor-pointer"
-                              title={uiLanguage === "vi" ? "Thích bản tin" : "Like briefing"}
-                            >
-                              <ThumbsUp className="w-2.5 h-2.5" />
-                              <span>{item.likeCount || 0}</span>
-                            </button>
-
-                            {/* Share Button */}
-                            <ShareButton
-                              briefingId={item.id}
-                              uiLanguage={uiLanguage}
-                              onShareSuccess={() => {
-                                refreshBriefings(false);
-                                // Ghi nhận tương tác share cho từng chủ đề trong chương
-                                item.payload?.chapters?.forEach((ch: any) => {
-                                  if (ch.topic) {
-                                    recordInteraction(ch.topic, "share", ch.id || item.id).catch((err) =>
-                                      console.error("Failed to record share interaction:", err)
-                                    );
-                                  }
-                                });
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={(e) => handleDeleteHistoryItem(item.id, e)}
-                          className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition"
-                          title="Delete Briefing"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )
-            ) : (
-              <PodcastManager
-                savedBriefings={savedBriefings}
-                podcastEpisodes={podcastEpisodes}
-                isPublishingPodcast={isPublishingPodcast}
-                podcastError={podcastError}
-                onPublishPodcast={handlePublishPodcast}
-                onDeletePodcastEpisode={handleDeletePodcastEpisode}
-                uiLanguage={uiLanguage}
-                isAutoPublish={isAutoPublish}
-                setIsAutoPublish={setIsAutoPublish}
-                selectedBriefId={selectedBriefId}
-                setSelectedBriefId={setSelectedBriefId}
-              />
-            )}
+          {/* Pro AI Assistant Dashboard Tab Bar */}
+          <div className="flex bg-slate-100 dark:bg-slate-900/60 p-1 rounded-2xl border border-slate-200/50 dark:border-slate-800" id="pro-ai-tabs">
+            <button
+              onClick={() => setRightTab("player")}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                rightTab === "player"
+                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+            >
+              <Volume2 className="w-4 h-4" />
+              <span>{uiLanguage === "vi" ? "Phát tin" : "Player"}</span>
+            </button>
+            <button
+              onClick={() => setRightTab("queue")}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                rightTab === "queue"
+                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+            >
+              <ListMusic className="w-4 h-4" />
+              <span>{uiLanguage === "vi" ? "AI Hàng đợi" : "AI Queue"}</span>
+            </button>
+            <button
+              onClick={() => setRightTab("stats")}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                rightTab === "stats"
+                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              <span>{uiLanguage === "vi" ? "Thống kê" : "Stats"}</span>
+            </button>
+            <button
+              onClick={() => setRightTab("settings")}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                rightTab === "settings"
+                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              <span>{uiLanguage === "vi" ? "Cài đặt" : "Settings"}</span>
+            </button>
           </div>
+
+          {rightTab === "player" && (
+            <div className="flex flex-col gap-6 animate-fade-in">
+              {/* Active status loaders */}
+              {step === "summarizing" && (
+                <div className="bg-slate-900 text-white p-8 rounded-3xl border border-slate-800 text-center shadow-2xl flex flex-col items-center justify-center min-h-[310px]">
+                  <div className="relative mb-6">
+                    <div className="w-16 h-16 rounded-full border-4 border-cyan-500 border-t-transparent animate-spin" />
+                    <Settings2 className="w-6 h-6 text-cyan-400 absolute top-5 left-5 animate-pulse" />
+                  </div>
+                  <h3 className="text-lg font-bold">{t.draftingTitle}</h3>
+                  <p className="text-xs text-slate-400 mt-2.5 max-w-xs leading-relaxed mb-4">
+                    {generationProgress}
+                  </p>
+                  {targetNewsTitle && (
+                    <div className="w-full max-w-sm px-4 py-3 bg-slate-800/80 border border-slate-700/60 rounded-2xl text-left animate-fade-in">
+                      <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest block mb-1">
+                        {uiLanguage === "vi" ? "ĐANG SOẠN THẢO BẢN TIN:" : "COMPILING ARTICLE:"}
+                      </span>
+                      <p className="text-xs font-semibold text-slate-100 line-clamp-2 leading-relaxed">
+                        {targetNewsTitle}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {step === "synthesizing" && (
+                <div className="bg-slate-900 text-white p-8 rounded-3xl border border-slate-800 text-center shadow-2xl flex flex-col items-center justify-center min-h-[310px]">
+                  <div className="relative mb-6">
+                    <div className="w-16 h-16 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
+                    <Volume2 className="w-6 h-6 text-amber-350 absolute top-5 left-5 animate-bounce" />
+                  </div>
+                  <h3 className="text-lg font-bold">{t.synthesizingTitle}</h3>
+                  <p className="text-xs text-slate-400 mt-2.5 max-w-xs leading-relaxed mb-4">
+                    {generationProgress}
+                  </p>
+                  {(activeTitle || targetNewsTitle) && (
+                    <div className="w-full max-w-sm px-4 py-3 bg-slate-800/80 border border-slate-700/60 rounded-2xl text-left animate-fade-in">
+                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest block mb-1">
+                        {uiLanguage === "vi" ? "TIÊU ĐỀ BẢN TIN PHÁT THANH:" : "AUDIO BRIEFING TITLE:"}
+                      </span>
+                      <p className="text-xs font-semibold text-slate-150 line-clamp-2 leading-relaxed">
+                        {activeTitle || targetNewsTitle}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {step === "error" && (
+                <div className="bg-white p-6 rounded-2xl border border-rose-250 shadow-sm text-center">
+                  <div className="w-12 h-12 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertCircle className="w-6 h-6 text-rose-600" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-800">{t.failedTitle}</h3>
+                  <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                    {errorMessage}
+                  </p>
+                  
+                  {/* Intelligent suggestion for large RSS aggregations or TTS/Gemini errors */}
+                  {isRssBasedGeneration && (
+                    <div className="mt-4 p-3.5 bg-amber-50 rounded-2xl border border-amber-200/80 text-left text-xs text-amber-900 space-y-1.5 animate-fade-in">
+                      <p className="font-bold flex items-center gap-1.5 text-amber-950">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                        <span>{uiLanguage === "vi" ? "Gợi ý khắc phục tối ưu:" : "Optimized troubleshooting tip:"}</span>
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-amber-800">
+                        {uiLanguage === "vi" 
+                          ? "Nếu số lượng bài viết quá nhiều dẫn đến quá tải/hết hạn ngạch (Timeout/TTS engine error), hãy bấm nút đóng phía dưới để quay lại, sau đó dùng chức năng 'Tạo bản tin vắn tắt mới nhất từ nguồn tin RSS' để giới hạn số lượng tin (ví dụ: 5-10 tin mới nhất) hoặc lọc riêng tin tức của 'Hôm nay'."
+                          : "If aggregating too many articles causes timeout or quota limits, please reset and use the 'Generate Custom Brief from RSS' feature. You can easily limit the article count (e.g., 5-10 latest items) or filter exclusively for 'Today's' news to bypass constraints."}
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => setStep("idle")}
+                    className="mt-4 text-xs bg-slate-100 hover:bg-slate-200 text-slate-705 border border-slate-200 px-4 py-2 rounded-lg font-medium transition cursor-pointer"
+                  >
+                    {t.btnReset}
+                  </button>
+                </div>
+              )}
+
+              {step === "idle" && (
+                <div className="bg-slate-100 border-2 border-dashed border-slate-300 rounded-3xl p-8 text-center flex flex-col items-center justify-center min-h-[310px] relative overflow-hidden">
+                  <Compass className="w-10 h-10 text-slate-400 mb-3 animate-pulse" />
+                  <h3 className="text-sm font-bold text-slate-700">{t.idleTitle}</h3>
+                  <p className="text-xs text-slate-500 mt-2 max-w-xs leading-relaxed">
+                    {t.idleSub}
+                  </p>
+                </div>
+              )}
+
+              {step === "ready" && activePayload && (
+                <ManualPcmPlayer
+                  payload={activePayload}
+                  audioChunks={activeAudioChunks}
+                  title={activeTitle}
+                  briefingId={selectedBriefId}
+                  preferencesInfo={`${
+                    preferences.voice === "vi-HN" 
+                      ? (uiLanguage === "vi" ? "Giọng Hà Nội" : "Hanoi Accent") 
+                      : preferences.voice === "vi-HCM" 
+                      ? (uiLanguage === "vi" ? "Giọng TP. HCM" : "HCM Accent") 
+                      : preferences.voice === "en-UK"
+                      ? (uiLanguage === "vi" ? "Giọng Anh-Anh (RP)" : "UK Accent (RP)")
+                      : preferences.voice === "en-US"
+                      ? (uiLanguage === "vi" ? "Giọng Anh-Mỹ (GA)" : "US Accent (GA)")
+                      : `${preferences.voice} Host`
+                  } • ${preferences.language === "bilingual" ? "Song Ngữ EN-VI" : preferences.language === "vi" ? "Tiếng Việt" : "English Mode"}`}
+                  uiLanguage={uiLanguage}
+                  onEnded={handlePlayerEnded}
+                />
+              )}
+
+              {/* Trending Popular Briefings Leaderboard */}
+              <TrendingBriefings
+                savedBriefings={savedBriefings}
+                onSelectBriefing={handleApplyHistoryBriefing}
+                onRefreshList={() => refreshBriefings(false)}
+                uiLanguage={uiLanguage}
+              />
+
+              {/* Interactive Pre-defined Samples */}
+              <SampleBriefings
+                saveNewBriefing={saveNewBriefing}
+                onPlaySample={handleApplyHistoryBriefing}
+                uiLanguage={uiLanguage}
+              />
+
+              {/* Real-time Storage stats warning and usage meters */}
+              <StorageStats
+                usedMB={storageUsage.usedMB}
+                totalItems={savedBriefings.length}
+                onClearAll={clearAllBriefings}
+                uiLanguage={uiLanguage}
+              />
+
+              {/* Local commute playlist drive list & Podcast tab container */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
+                <div className="flex justify-between items-center border-b border-slate-150 pb-2.5">
+                  <div className="flex gap-4">
+                    <button
+                      onClick={() => setActiveHistoryTab("history")}
+                      className={`pb-2 text-xs sm:text-sm font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                        activeHistoryTab === "history"
+                          ? "border-cyan-600 text-cyan-700"
+                          : "border-transparent text-slate-400 hover:text-slate-600"
+                      }`}
+                    >
+                      <History className="w-4 h-4" />
+                      <span>{uiLanguage === "vi" ? "Lịch sử bản tin" : "Briefing History"}</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveHistoryTab("podcast")}
+                      className={`pb-2 text-xs sm:text-sm font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                        activeHistoryTab === "podcast"
+                          ? "border-cyan-600 text-cyan-700"
+                          : "border-transparent text-slate-400 hover:text-slate-600"
+                      }`}
+                    >
+                      <Podcast className="w-4 h-4" />
+                      <span>{uiLanguage === "vi" ? "Đăng tải Podcast" : "Podcast Publish"}</span>
+                    </button>
+                  </div>
+
+                  {activeHistoryTab === "history" && (
+                    <div className="hidden sm:flex items-center gap-1.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
+                      <span>
+                        {uiLanguage === "vi" 
+                          ? `Bản tin: ${savedBriefings.length}` 
+                          : `Briefings: ${savedBriefings.length}`}
+                      </span>
+                      <span>•</span>
+                      <span>
+                        {uiLanguage === "vi" 
+                          ? `Đã dùng: ${storageUsage.usedMB.toFixed(1)}MB` 
+                          : `Used: ${storageUsage.usedMB.toFixed(1)}MB`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {activeHistoryTab === "history" ? (
+                  savedBriefings.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                      <p className="text-xs font-bold text-slate-500">{t.historyEmpty}</p>
+                      <p className="text-[10px] text-slate-400 mt-1">{t.historyEmptySub}</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2.5 max-h-[380px] overflow-y-auto pr-1">
+                      {savedBriefings.map((item) => {
+                        const itemLanguage = item.preferences.language || "bilingual";
+                        
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => handleApplyHistoryBriefing(item)}
+                            className="p-3.5 bg-slate-50/60 hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl transition cursor-pointer flex justify-between items-start gap-4 group text-left"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-750 uppercase">
+                                  {itemLanguage}
+                                </span>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 capitalize">
+                                  {item.preferences.targetDuration}
+                                </span>
+                              </div>
+                              <h4 className="text-xs font-bold text-slate-800 truncate">
+                                {item.payload.title}
+                              </h4>
+                              <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1.5 font-mono">
+                                <span>🕒 {item.timestamp}</span>
+                              </p>
+                              <div className="flex items-center gap-2 mt-2">
+                                {/* Like Button */}
+                                <button
+                                  type="button"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await incrementBriefingLikes(item.id);
+                                    refreshBriefings(false);
+                                    // Ghi nhận tương tác like cho từng chủ đề trong chương
+                                    item.payload?.chapters?.forEach((ch: any) => {
+                                      if (ch.topic) {
+                                        recordInteraction(ch.topic, "like", ch.id || item.id).catch((err) =>
+                                          console.error("Failed to record like interaction:", err)
+                                        );
+                                      }
+                                    });
+                                  }}
+                                  className="text-[10px] text-slate-550 hover:text-rose-600 font-bold bg-white hover:bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 transition-all flex items-center gap-1 cursor-pointer"
+                                  title={uiLanguage === "vi" ? "Thích bản tin" : "Like briefing"}
+                                >
+                                  <ThumbsUp className="w-2.5 h-2.5" />
+                                  <span>{item.likeCount || 0}</span>
+                                </button>
+
+                                {/* Share Button */}
+                                <ShareButton
+                                  briefingId={item.id}
+                                  uiLanguage={uiLanguage}
+                                  onShareSuccess={() => {
+                                    refreshBriefings(false);
+                                    // Ghi nhận tương tác share cho từng chủ đề trong chương
+                                    item.payload?.chapters?.forEach((ch: any) => {
+                                      if (ch.topic) {
+                                        recordInteraction(ch.topic, "share", ch.id || item.id).catch((err) =>
+                                          console.error("Failed to record share interaction:", err)
+                                        );
+                                      }
+                                    });
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addToQueue({
+                                    id: item.id,
+                                    title: item.payload?.title || "Bản tin không tên",
+                                    subtitle: new Date(item.timestamp).toLocaleDateString(),
+                                    duration: item.payload?.chapters?.reduce((acc: any, ch: any) => acc + (ch.scriptText?.length || 0) * 0.08, 60) || 60,
+                                    type: "podcast"
+                                  });
+                                  alert(uiLanguage === "vi" ? "Đã thêm vào hàng đợi phát!" : "Added to play queue!");
+                                }}
+                                className="text-slate-400 hover:text-cyan-600 p-1.5 hover:bg-cyan-55/10 rounded-lg transition"
+                                title={uiLanguage === "vi" ? "Thêm vào hàng đợi phát" : "Add to play queue"}
+                              >
+                                <ListPlus className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                onClick={(e) => handleDeleteHistoryItem(item.id, e)}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition"
+                                title="Delete Briefing"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : (
+                  <PodcastManager
+                    savedBriefings={savedBriefings}
+                    podcastEpisodes={podcastEpisodes}
+                    isPublishingPodcast={isPublishingPodcast}
+                    podcastError={podcastError}
+                    onPublishPodcast={handlePublishPodcast}
+                    onDeletePodcastEpisode={handleDeletePodcastEpisode}
+                    uiLanguage={uiLanguage}
+                    isAutoPublish={isAutoPublish}
+                    setIsAutoPublish={setIsAutoPublish}
+                    selectedBriefId={selectedBriefId}
+                    setSelectedBriefId={setSelectedBriefId}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {rightTab === "queue" && (
+            <div className="flex flex-col gap-6 animate-fade-in" id="queue-tab-panel">
+              <SmartQueue
+                onSelectItem={handleApplyHistoryBriefing}
+                activeItemId={selectedBriefId}
+                uiLanguage={uiLanguage}
+              />
+              <PersonalMemory uiLanguage={uiLanguage} />
+            </div>
+          )}
+
+          {rightTab === "stats" && (
+            <div className="flex flex-col gap-6 animate-fade-in" id="stats-tab-panel">
+              <ReadingStatistics uiLanguage={uiLanguage} />
+              <DownloadManager
+                savedBriefings={savedBriefings}
+                onDeleteBriefing={(id) => deleteOneBriefing(id).then(() => refreshBriefings(false))}
+                onClearAll={clearAllBriefings}
+                uiLanguage={uiLanguage}
+              />
+            </div>
+          )}
+
+          {rightTab === "settings" && (
+            <div className="flex flex-col gap-6 animate-fade-in" id="settings-tab-panel">
+              <SettingsCenter
+                uiLanguage={uiLanguage}
+                onClearAllCache={clearAllBriefings}
+              />
+              <PwaStatus />
+            </div>
+          )}
 
         </section>
 

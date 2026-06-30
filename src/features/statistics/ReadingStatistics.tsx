@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { BarChart3, Clock, PlayCircle, Globe, Award, Sparkles, TrendingUp } from "lucide-react";
-import { getListenStats, featureStoreEvents, ListenStats } from "../store";
+import { getListenStats, featureStoreEvents } from "../store";
+import { ListenStats } from "../types";
 
 interface ReadingStatisticsProps {
   uiLanguage?: "vi" | "en";
@@ -33,7 +34,7 @@ export function ReadingStatistics({ uiLanguage = "vi" }: ReadingStatisticsProps)
 
   // Categories list ordered by frequency
   const categories = Object.entries(stats.byCategory)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => (b[1] as number) - (a[1] as number))
     .slice(0, 4);
 
   return (
@@ -114,8 +115,8 @@ export function ReadingStatistics({ uiLanguage = "vi" }: ReadingStatisticsProps)
           </h4>
           <div className="flex flex-col gap-2">
             {Object.entries(stats.byLanguage).map(([lang, count]) => {
-              const total = Object.values(stats.byLanguage).reduce((a, b) => a + b, 0) || 1;
-              const pct = Math.round((count / total) * 100);
+              const total = (Object.values(stats.byLanguage).reduce((a: number, b: any) => a + (b as number), 0) as number) || 1;
+              const pct = Math.round(((count as number) / (total as number)) * 100);
               const label = lang === "vi" ? "Tiếng Việt" : lang === "en" ? "English" : "Song ngữ / Bilingual";
               return (
                 <div key={lang} className="text-xs">
@@ -142,8 +143,8 @@ export function ReadingStatistics({ uiLanguage = "vi" }: ReadingStatisticsProps)
           </h4>
           <div className="flex flex-col gap-2">
             {categories.map(([cat, count]) => {
-              const total = Object.values(stats.byCategory).reduce((a, b) => a + b, 0) || 1;
-              const pct = Math.round((count / total) * 100);
+              const total = (Object.values(stats.byCategory).reduce((a: number, b: any) => a + (b as number), 0) as number) || 1;
+              const pct = Math.round(((count as number) / (total as number)) * 100);
               return (
                 <div key={cat} className="text-xs">
                   <div className="flex justify-between text-slate-600 dark:text-slate-300 mb-1">

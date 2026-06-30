@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Brain, Trash2, ShieldAlert, Sparkles, AlertCircle, Trash } from "lucide-react";
-import { getPersonalMemory, savePersonalMemory, clearPersonalMemory, featureStoreEvents, PersonalizedMemory } from "../store";
+import { getPersonalMemory, savePersonalMemory, clearPersonalMemory, featureStoreEvents } from "../store";
+import { PersonalizedMemory } from "../types";
 
 interface PersonalMemoryProps {
   uiLanguage?: "vi" | "en";

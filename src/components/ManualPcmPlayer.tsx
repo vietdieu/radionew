@@ -611,6 +611,28 @@ useEffect(() => {
     return () => clearInterval(interval);
   }, [isPlaying]);
 
+  // Handle global player control events from keyboard shortcuts
+  useEffect(() => {
+    const handleTogglePlayEvent = () => {
+      handlePlayPause();
+    };
+    const handleSeekEvent = (e: Event) => {
+      const direction = (e as CustomEvent).detail?.direction;
+      if (direction === "forward") {
+        handleSkip(10);
+      } else if (direction === "backward") {
+        handleSkip(-10);
+      }
+    };
+
+    window.addEventListener("commutecast-toggle-play", handleTogglePlayEvent);
+    window.addEventListener("commutecast-seek", handleSeekEvent);
+    return () => {
+      window.removeEventListener("commutecast-toggle-play", handleTogglePlayEvent);
+      window.removeEventListener("commutecast-seek", handleSeekEvent);
+    };
+  }, [isPlaying, currentTime, totalDuration, playbackRate, volume]);
+
   // ===== FIX: Xử lý rate change với giới hạn =====
   const handleRateChange = (rate: number) => {
     // Giới hạn rate để tránh biến dạng giọng quá nhiều

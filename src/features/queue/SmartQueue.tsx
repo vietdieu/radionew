@@ -2,10 +2,11 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Play, Trash2, ArrowUp, ArrowDown, ListMusic, Sparkles, Check, ListX } from "lucide-react";
-import { getPlayQueue, savePlayQueue, removeFromQueue, featureStoreEvents, QueueItem } from "../store";
+import { getPlayQueue, savePlayQueue, removeFromQueue, featureStoreEvents } from "../store";
+import { QueueItem } from "../types";
 
 interface SmartQueueProps {
-  onSelectItem: (item: QueueItem) => void;
+  onSelectItem: (item: any) => void;
   activeItemId?: string;
   uiLanguage?: "vi" | "en";
 }

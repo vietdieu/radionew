@@ -18,12 +18,14 @@ import {
   getFeatureSettings, 
   saveFeatureSettings, 
   getVoiceProfile, 
-  getAccessibilityConfig, 
-  FeatureSettings, 
-  VoiceProfile, 
-  AccessibilityConfig,
+  getAccessibilityConfig,
   clearPersonalMemory
 } from "../store";
+import { 
+  FeatureSettings, 
+  VoiceProfile, 
+  AccessibilityConfig 
+} from "../types";
 import { useUserPreferences, DefaultLanguage, PreferedVoice, ReadSpeed } from "../../components/UserPreferencesProvider";
 
 interface SettingsCenterProps {
