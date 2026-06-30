@@ -1,25 +1,21 @@
 import { logger } from "../utils/logger";
 
-export type CloudSyncState = "CONNECTED" | "LOCAL_ONLY" | "OFFLINE" | "MISCONFIGURED" | "SYNCING";
+export type CloudSyncState = "INITIALIZING" | "CONNECTED" | "LOCAL_ONLY" | "OFFLINE" | "MISCONFIGURED";
 
 type Listener = (state: CloudSyncState) => void;
 
 class CloudSyncStatusService {
-  private currentState: CloudSyncState = "LOCAL_ONLY";
+  private currentState: CloudSyncState = "INITIALIZING";
   private listeners: Set<Listener> = new Set();
-  
-  // Default non-functional credentials to detect
-  private readonly defaultUrl = "https://omcuhthpeenwlzdwzlra.supabase.co";
-  private readonly defaultKey = "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez";
 
   constructor() {
     // Initial check for online status
     if (typeof window !== "undefined") {
-      this.currentState = window.navigator.onLine ? "LOCAL_ONLY" : "OFFLINE";
+      this.currentState = window.navigator.onLine ? "INITIALIZING" : "OFFLINE";
       
       window.addEventListener("online", () => {
         if (this.currentState === "OFFLINE") {
-          this.setState("LOCAL_ONLY"); // Will upgrade to CONNECTED/SYNCING once client initializes
+          this.setState("INITIALIZING");
         }
       });
       
@@ -58,22 +54,6 @@ class CloudSyncStatusService {
         logger.warn("[CloudSyncStatus] Listener callback failed", err);
       }
     });
-  }
-
-  /**
-   * Helper to inspect if Supabase keys are default or missing
-   */
-  public isConfigValid(url?: string, key?: string): boolean {
-    if (!url || !key) return false;
-    
-    const cleanUrl = url.trim();
-    const cleanKey = key.trim();
-
-    if (cleanUrl === "" || cleanKey === "") return false;
-    if (cleanUrl === this.defaultUrl) return false;
-    if (cleanKey === this.defaultKey) return false;
-
-    return true;
   }
 }
 

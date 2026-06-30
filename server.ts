@@ -2864,23 +2864,38 @@ app.get("/api/podcast/feed", async (req, res): Promise<any> => {
 
 // ==================== SUPABASE CONFIG ENDPOINT ====================
 app.get("/api/supabase-config", (req, res) => {
-  let url = (process.env.SUPABASE_URL || "https://omcuhthpeenwlzdwzlra.supabase.co").trim();
-  const key = (process.env.SUPABASE_ANON_KEY || "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez").trim();
+  const rawUrl = (process.env.SUPABASE_URL || "").trim();
+  const rawKey = (process.env.SUPABASE_ANON_KEY || "").trim();
 
-  if (url.includes("supabase.com/dashboard/project/")) {
-    const parts = url.split("supabase.com/dashboard/project/");
-    if (parts[1]) {
-      const projectRef = parts[1].split("/")[0];
-      if (projectRef) {
-        url = `https://${projectRef}.supabase.co`;
+  // Validate that required variables exist and are non-empty
+  const hasUrl = rawUrl.length > 0 && !rawUrl.includes("placeholder") && !rawUrl.includes("dummy");
+  const hasKey = rawKey.length > 0 && !rawKey.includes("placeholder") && !rawKey.includes("dummy");
+  const isConfigured = hasUrl && hasKey;
+
+  if (isConfigured) {
+    let url = rawUrl;
+    if (url.includes("supabase.com/dashboard/project/")) {
+      const parts = url.split("supabase.com/dashboard/project/");
+      if (parts[1]) {
+        const projectRef = parts[1].split("/")[0];
+        if (projectRef) {
+          url = `https://${projectRef}.supabase.co`;
+        }
       }
     }
-  }
 
-  res.json({
-    supabaseUrl: url,
-    supabaseAnonKey: key
-  });
+    res.json({
+      configured: true,
+      url: url,
+      anonKey: rawKey,
+      environment: process.env.NODE_ENV || "development"
+    });
+  } else {
+    res.json({
+      configured: false,
+      reason: "Missing or incomplete SUPABASE_URL or SUPABASE_ANON_KEY environment variables."
+    });
+  }
 });
 
 // ==================== SERVE FRONTEND ====================

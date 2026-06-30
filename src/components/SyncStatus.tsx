@@ -37,6 +37,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
   const { 
     user, 
     cloudStatus, 
+    syncStatus,
     queueLength, 
     triggerSync, 
     updateQueueLength 
@@ -50,7 +51,25 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
   }, [cloudStatus, updateQueueLength]);
 
   const getStatusContent = () => {
+    if (syncStatus === "syncing") {
+      return {
+        icon: <RefreshCw className="w-4 h-4 text-cyan-500 animate-spin" />,
+        text: queueLength > 0 ? `${dict.syncing} (${queueLength} ${dict.pending})` : dict.syncing,
+        bg: "bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/50 text-cyan-600 dark:text-cyan-300",
+        actionBtn: null,
+        title: "Synchronization in progress"
+      };
+    }
+
     switch (cloudStatus) {
+      case "INITIALIZING":
+        return {
+          icon: <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" />,
+          text: uiLanguage === "vi" ? "Đang khởi tạo..." : "Initializing...",
+          bg: "bg-slate-50 dark:bg-slate-950/30 border border-slate-200 dark:border-slate-800/50 text-slate-600 dark:text-slate-400",
+          actionBtn: null,
+          title: "Initializing Supabase Cloud Connection..."
+        };
       case "OFFLINE":
         return {
           icon: <CloudOff className="w-4 h-4 text-slate-400" />,
@@ -66,14 +85,6 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
           bg: "bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/50 text-rose-600 dark:text-rose-400",
           actionBtn: null,
           title: dict.explainMisconfigured
-        };
-      case "SYNCING":
-        return {
-          icon: <RefreshCw className="w-4 h-4 text-cyan-500 animate-spin" />,
-          text: queueLength > 0 ? `${dict.syncing} (${queueLength} ${dict.pending})` : dict.syncing,
-          bg: "bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/50 text-cyan-600 dark:text-cyan-300",
-          actionBtn: null,
-          title: "Synchronization in progress"
         };
       case "CONNECTED":
         return {
@@ -139,4 +150,3 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
 }
 
 export default SyncStatus;
-

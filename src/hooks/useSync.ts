@@ -22,12 +22,12 @@ export function useSync() {
   const [isAborting, setIsAborting] = useState(false);
   const [queueLength, setQueueLength] = useState(0);
 
-  // Ref để chặn đồng bộ song song
+  // Ref to block parallel sync runs
   const syncInProgressRef = useRef(false);
-  // Ref quản lý timer debounce
+  // Ref for debounce timer
   const debounceTimerRef = useRef<any>(null);
 
-  // Subscribe to central cloud sync status
+  // Subscribe to central authoritative cloud sync status
   useEffect(() => {
     const unsubscribe = cloudSyncStatus.subscribe((state) => {
       setCloudStatus(state);
@@ -35,7 +35,7 @@ export function useSync() {
     return unsubscribe;
   }, []);
 
-  // Cập nhật số lượng phần tử chờ đồng bộ
+  // Update pending sync queue length
   const updateQueueLength = useCallback(async () => {
     try {
       const queue = await getSyncQueue();
@@ -45,7 +45,7 @@ export function useSync() {
     }
   }, []);
 
-  // Hàm thực hiện đồng bộ an toàn
+  // Safe synchronization runner
   const safePerformSync = useCallback(async () => {
     if (syncInProgressRef.current) {
       logger.info("[useSync] Sync already in progress. Skipping concurrent run.");
@@ -54,7 +54,6 @@ export function useSync() {
 
     if (!isOnline()) {
       setSyncStatus("offline");
-      cloudSyncStatus.setState("OFFLINE");
       return;
     }
 
@@ -66,7 +65,6 @@ export function useSync() {
     try {
       syncInProgressRef.current = true;
       setSyncStatus("syncing");
-      cloudSyncStatus.setState("SYNCING");
       setIsAborting(false);
       
       logger.info("[useSync] Starting full cloud-local batch synchronization...");
@@ -74,24 +72,12 @@ export function useSync() {
       
       if (ok) {
         setSyncStatus("synced");
-        // Verify we didn't end up misconfigured
-        if (cloudSyncStatus.getState() !== "MISCONFIGURED") {
-          cloudSyncStatus.setState("CONNECTED");
-        }
       } else {
-        // Nếu bị hủy, giữ trạng thái synced hoặc offline tùy mạng
-        const nextStatus = isOnline() ? "synced" : "offline";
-        setSyncStatus(nextStatus);
-        if (cloudSyncStatus.getState() !== "MISCONFIGURED") {
-          cloudSyncStatus.setState(isOnline() ? "CONNECTED" : "OFFLINE");
-        }
+        setSyncStatus(isOnline() ? "synced" : "offline");
       }
     } catch (err: any) {
       logger.error("[useSync] Sync failed:", err);
       setSyncStatus("error");
-      if (cloudSyncStatus.getState() !== "MISCONFIGURED") {
-        cloudSyncStatus.setState("LOCAL_ONLY");
-      }
     } finally {
       syncInProgressRef.current = false;
       setIsAborting(false);
@@ -99,13 +85,12 @@ export function useSync() {
     }
   }, [updateQueueLength]);
 
-  // Thiết lập debounce 3-5 giây (chọn 4 giây làm mốc tối ưu)
+  // Debounced cloud synchronization
   const triggerDebouncedSync = useCallback(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    // Cập nhật độ dài hàng đợi hiển thị tức thì trên UI trước khi chạy thực tế
     updateQueueLength();
 
     debounceTimerRef.current = setTimeout(async () => {
@@ -118,10 +103,10 @@ export function useSync() {
       if (session?.user) {
         await safePerformSync();
       }
-    }, 4000); // Trì hoãn 4 giây
+    }, 4000);
   }, [safePerformSync, updateQueueLength]);
 
-  // Hàm hủy đồng bộ thủ công
+  // Abort synchronization manually
   const handleAbortSync = useCallback(() => {
     if (syncStatus === "syncing") {
       const confirmed = window.confirm(
@@ -135,9 +120,6 @@ export function useSync() {
           alert("Không có tiến trình đồng bộ nào để hủy.");
         } else {
           setSyncStatus("synced");
-          if (cloudSyncStatus.getState() !== "MISCONFIGURED") {
-            cloudSyncStatus.setState("CONNECTED");
-          }
           setIsAborting(false);
           updateQueueLength();
         }
@@ -147,7 +129,7 @@ export function useSync() {
     }
   }, [syncStatus, updateQueueLength]);
 
-  // Kiểm tra phiên đăng nhập ban đầu
+  // Check active session on startup
   const checkSession = useCallback(async () => {
     const supabase = await getSupabaseClientAsync();
     if (!supabase) {
@@ -175,7 +157,7 @@ export function useSync() {
     }
   }, [safePerformSync, updateQueueLength]);
 
-  // Kích hoạt đồng bộ thủ công ngay lập tức
+  // Trigger immediate synchronization manually
   const triggerSync = useCallback(async () => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -183,11 +165,10 @@ export function useSync() {
 
     if (!isOnline()) {
       setSyncStatus("offline");
-      cloudSyncStatus.setState("OFFLINE");
       return;
     }
 
-    const supabase = await getSupabaseClientAsync();
+    const supabase = await getSupabaseClientAsync(true); // Force connection and health check ping
     if (!supabase) {
       setSyncStatus("error");
       return;
@@ -202,7 +183,7 @@ export function useSync() {
     await safePerformSync();
   }, [safePerformSync]);
 
-  // Lắng nghe các sự kiện và trạng thái mạng
+  // Network and event listeners configuration
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
 
@@ -235,16 +216,16 @@ export function useSync() {
 
     setupListeners();
 
-    // Sự kiện khi mạng online trở lại
+    // Trigger on browser going online
     const handleOnline = async () => {
       setIsOnlineState(true);
-      logger.info("[useSync] Browser went ONLINE. Processing pending queue...");
-      const supabase = await getSupabaseClientAsync();
+      logger.info("[useSync] Browser went ONLINE. Verifying connection and processing queue...");
+      
+      const supabase = await getSupabaseClientAsync(true); // Force reconnect and health check ping
       if (supabase) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
           setSyncStatus("syncing");
-          cloudSyncStatus.setState("SYNCING");
           const ok = await processSyncQueueAsync();
           if (ok) {
             await safePerformSync();
@@ -256,15 +237,14 @@ export function useSync() {
       }
     };
 
-    // Sự kiện khi mạng offline
+    // Trigger on browser going offline
     const handleOffline = () => {
       setIsOnlineState(false);
       logger.info("[useSync] Browser went OFFLINE.");
       setSyncStatus(prev => (prev === "unauthenticated" ? "unauthenticated" : "offline"));
-      cloudSyncStatus.setState("OFFLINE");
     };
 
-    // Sự kiện khi có thay đổi trong hàng đợi đồng bộ cục bộ
+    // Trigger on queue update
     const handleQueueUpdated = () => {
       logger.info("[useSync] Sync queue updated. Debouncing cloud synchronization...");
       triggerDebouncedSync();
@@ -300,4 +280,3 @@ export function useSync() {
   };
 }
 export default useSync;
-

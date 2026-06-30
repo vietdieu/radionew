@@ -5,15 +5,18 @@ import { logger } from "../utils/logger";
 let clientInstance: SupabaseClient | null = null;
 let initPromise: Promise<SupabaseClient | null> | null = null;
 
-export async function getSupabaseClientAsync(): Promise<SupabaseClient | null> {
+export async function getSupabaseClientAsync(forceRetry = false): Promise<SupabaseClient | null> {
   if (clientInstance) return clientInstance;
 
-  if (initPromise) return initPromise;
+  if (initPromise && !forceRetry) return initPromise;
+
+  cloudSyncStatus.setState("INITIALIZING");
 
   initPromise = (async () => {
     try {
       if (typeof window !== "undefined" && !window.navigator.onLine) {
         cloudSyncStatus.setState("OFFLINE");
+        initPromise = null; // Clear so we can retry on next connection
         return null;
       }
 
@@ -23,31 +26,56 @@ export async function getSupabaseClientAsync(): Promise<SupabaseClient | null> {
         throw new Error("Failed to fetch Supabase config from server.");
       }
       const data = await res.json();
-      const { supabaseUrl, supabaseAnonKey } = data;
 
-      // 2. Validate configuration credentials (check for missing or default dummy values)
-      if (!cloudSyncStatus.isConfigValid(supabaseUrl, supabaseAnonKey)) {
-        logger.warn("[Supabase Client] Config is missing or using default sandbox credentials. Transitioning to MISCONFIGURED (Local Storage mode only).");
+      if (!data.configured) {
+        logger.warn("[Supabase Client] Supabase is not configured on the backend. Mode: MISCONFIGURED.");
         cloudSyncStatus.setState("MISCONFIGURED");
+        initPromise = null;
         return null;
       }
 
-      // 3. Initialize Supabase Client
-      clientInstance = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-          storage: window.localStorage,
-        },
-      });
+      const { url, anonKey } = data;
 
-      logger.info("[Supabase Client] Client initialized successfully.");
-      cloudSyncStatus.setState("CONNECTED");
-      return clientInstance;
+      // 2. Connection Validation (lightweight health check ping)
+      try {
+        const pingRes = await fetch(`${url}/rest/v1/`, {
+          headers: {
+            apikey: anonKey,
+          },
+          // Keep a short 4-second timeout so it never blocks the app
+          signal: AbortSignal.timeout(4000)
+        });
+
+        if (pingRes.status === 401 || pingRes.status === 403) {
+          logger.error("[Supabase Client] Supabase key rejected by server (401/403 Unauthorized). Setting MISCONFIGURED.");
+          cloudSyncStatus.setState("MISCONFIGURED");
+          initPromise = null;
+          return null;
+        }
+
+        // Successfully contacted and authenticated! Now safe to initialize createClient
+        clientInstance = createClient(url, anonKey, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+            storage: window.localStorage,
+          },
+        });
+
+        logger.info("[Supabase Client] Client initialized and health check verified successfully.");
+        cloudSyncStatus.setState("CONNECTED");
+        return clientInstance;
+      } catch (pingErr: any) {
+        logger.warn("[Supabase Client] Connection health check failed (host unreachable or timeout). Setting to OFFLINE.", pingErr);
+        cloudSyncStatus.setState("OFFLINE");
+        initPromise = null; // Clear so we can retry on next online event
+        return null;
+      }
     } catch (err: any) {
       logger.error("[Supabase Client] Failed to initialize Supabase client:", err);
       cloudSyncStatus.setState("LOCAL_ONLY");
+      initPromise = null; // Clear so we can retry
       return null;
     }
   })();
