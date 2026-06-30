@@ -41,6 +41,7 @@ export async function getSupabaseClientAsync(forceRetry = false): Promise<Supaba
         const pingRes = await fetch(`${url}/rest/v1/`, {
           headers: {
             apikey: anonKey,
+            Authorization: `Bearer ${anonKey}`,
           },
           // Keep a short 4-second timeout so it never blocks the app
           signal: AbortSignal.timeout(4000)

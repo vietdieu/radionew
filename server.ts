@@ -2864,8 +2864,8 @@ app.get("/api/podcast/feed", async (req, res): Promise<any> => {
 
 // ==================== SUPABASE CONFIG ENDPOINT ====================
 app.get("/api/supabase-config", (req, res) => {
-  const rawUrl = (process.env.SUPABASE_URL || "").trim();
-  const rawKey = (process.env.SUPABASE_ANON_KEY || "").trim();
+  const rawUrl = (process.env.SUPABASE_URL || "https://omcuhthpeenwlzdwzlra.supabase.co").trim();
+  const rawKey = (process.env.SUPABASE_ANON_KEY || "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez").trim();
 
   // Validate that required variables exist and are non-empty
   const hasUrl = rawUrl.length > 0 && !rawUrl.includes("placeholder") && !rawUrl.includes("dummy");
