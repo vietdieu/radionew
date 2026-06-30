@@ -148,7 +148,6 @@ export async function calculatePreferences(signal?: AbortSignal): Promise<void> 
   if (signal?.aborted) return;
 
   // 2. Perform background batch saving of preferences into IndexedDB
-  // Use requestIdleCallback or setTimeout chunking to avoid locking the UI
   const prefTx = db.transaction(["userPreferences", "appMetadata"], "readwrite");
   const prefStore = prefTx.objectStore("userPreferences");
   const metaStore = prefTx.objectStore("appMetadata");
@@ -157,38 +156,35 @@ export async function calculatePreferences(signal?: AbortSignal): Promise<void> 
   prefStore.clear();
 
   const topics = Object.keys(topicScores);
-  const CHUNK_SIZE = 10;
   
-  const saveChunk = async (index: number) => {
-    if (signal?.aborted) return;
-    if (index >= topics.length) {
-      // Done. Update last calculation timestamp
-      metaStore.put({ key: "lastPreferenceCalculation", value: now.toISOString() });
-      console.log("[calculatePreferences] Rebuild completed successfully.");
+  for (const topic of topics) {
+    if (signal?.aborted) {
+      prefTx.abort();
       return;
     }
+    const data = topicScores[topic];
+    const pref: UserPreference = {
+      topic,
+      score: data.total,
+      lastInteractedAt: new Date(data.lastMs).toISOString(),
+    };
+    prefStore.put(pref);
+  }
 
-    const end = Math.min(index + CHUNK_SIZE, topics.length);
-    for (let i = index; i < end; i++) {
-      const topic = topics[i];
-      const data = topicScores[topic];
-      const pref: UserPreference = {
-        topic,
-        score: data.total,
-        lastInteractedAt: new Date(data.lastMs).toISOString(),
-      };
-      prefStore.put(pref);
-    }
+  metaStore.put({ key: "lastPreferenceCalculation", value: now.toISOString() });
 
-    // Yield control to UI thread
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      window.requestIdleCallback(() => saveChunk(end));
-    } else {
-      setTimeout(() => saveChunk(end), 0);
-    }
-  };
-
-  await saveChunk(0);
+  await new Promise<void>((resolve, reject) => {
+    prefTx.oncomplete = () => {
+      console.log("[calculatePreferences] Rebuild completed successfully.");
+      resolve();
+    };
+    prefTx.onerror = () => {
+      reject(prefTx.error || new Error("Transaction failed"));
+    };
+    prefTx.onabort = () => {
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+  });
 }
 
 /**

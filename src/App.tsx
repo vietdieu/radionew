@@ -58,6 +58,17 @@ import SampleBriefings from "./components/SampleBriefings";
 import StorageStats from "./components/StorageStats";
 import VoiceSearch from "./components/VoiceSearch";
 import AssistantChat from "./components/AssistantChat";
+
+// Modern AI Assistant Modular Features
+import { SmartQueue } from "./features/queue/SmartQueue";
+import { ReadingStatistics } from "./features/statistics/ReadingStatistics";
+import { PersonalMemory } from "./features/memory/PersonalMemory";
+import { PwaStatus } from "./features/pwa/PwaStatus";
+import { DownloadManager } from "./features/download/DownloadManager";
+import { SettingsCenter } from "./features/settings/SettingsCenter";
+import { addToQueue, getPlayQueue, getPersonalMemory } from "./features/store";
+import { Brain, ListMusic, ListPlus, Settings } from "lucide-react";
+
 import TopicSuggestions from "./components/TopicSuggestions";
 import RSSManager from "./components/RSSManager";
 import TrendingBriefings from "./components/TrendingBriefings";
@@ -352,6 +363,7 @@ export default function App() {
   const [isPublishingPodcast, setIsPublishingPodcast] = useState<boolean>(false);
   const [podcastError, setPodcastError] = useState<string>("");
   const [activeHistoryTab, setActiveHistoryTab] = useState<"history" | "podcast">("history");
+  const [rightTab, setRightTab] = useState<"player" | "ai" | "settings">("player");
   const [isAutoPublish, setIsAutoPublish] = useState<boolean>(() => {
     return localStorage.getItem("commutecast_auto_publish") === "true";
   });
@@ -1335,11 +1347,11 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
       </header>
 
       {/* Main Grid Workdesk */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 grid grid-cols-1 md:grid-cols-12 gap-6 lg:gap-8">
         
         {/* RSS Auto-Briefing Notification banner */}
         {showRssNotification && rssNotificationArticles.length > 0 && (
-          <div className="lg:col-span-12 p-4 bg-gradient-to-r from-cyan-500 to-indigo-600 text-slate-950 rounded-2xl shadow-lg border border-cyan-400/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in relative overflow-hidden text-left" id="rss-alert-banner">
+          <div className="md:col-span-12 p-4 bg-gradient-to-r from-cyan-500 to-indigo-600 text-slate-950 rounded-2xl shadow-lg border border-cyan-400/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in relative overflow-hidden text-left" id="rss-alert-banner">
             <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none" />
             <div className="flex items-center gap-3 relative">
               <div className="p-2.5 bg-slate-950 text-cyan-400 rounded-xl">
@@ -1383,7 +1395,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         )}
 
         {/* Left Side setup */}
-        <section className="lg:col-span-7 flex flex-col gap-6" id="setup-panel-desktop">
+        <section className="md:col-span-7 flex flex-col gap-6" id="setup-panel-desktop">
           
           {/* Smart Topic Suggestions */}
           <TopicSuggestions
@@ -1944,7 +1956,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         </section>
 
         {/* Right Side: Active Player deck & historical playlists */}
-        <section className="lg:col-span-5 flex flex-col gap-6" id="output-panel-desktop">
+        <section className="md:col-span-5 flex flex-col gap-6" id="output-panel-desktop">
           
           {/* Active status loaders */}
           {step === "summarizing" && (

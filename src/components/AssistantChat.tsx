@@ -135,7 +135,7 @@ export default function AssistantChat({
           setIsOpen(!isOpen);
           stopSpeaking();
         }}
-        className={`fixed bottom-6 right-6 z-[100] p-4 rounded-full shadow-2xl transition-all duration-300 transform active:scale-95 cursor-pointer flex items-center justify-center border ${
+        className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[100] p-3.5 sm:p-4 rounded-full shadow-2xl transition-all duration-300 transform active:scale-95 cursor-pointer flex items-center justify-center border ${
           isOpen 
             ? "bg-slate-900 border-slate-700 text-cyan-400 hover:bg-slate-800" 
             : "bg-gradient-to-tr from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 border-cyan-400/20 text-white hover:scale-105"
@@ -160,7 +160,7 @@ export default function AssistantChat({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 50, scale: 0.9 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            className="fixed bottom-24 right-6 z-[100] w-full max-w-sm h-[500px] md:h-[580px] bg-white dark:bg-slate-950 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-fade-in"
+            className="fixed bottom-20 right-4 left-4 sm:left-auto sm:right-6 sm:bottom-24 z-[100] w-auto sm:w-full sm:max-w-sm h-[500px] md:h-[580px] bg-white dark:bg-slate-950 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-fade-in"
             id="assistant-chat-window"
           >
             {/* Header */}

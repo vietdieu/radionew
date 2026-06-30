@@ -33,6 +33,7 @@ interface ManualPcmPlayerProps {
   preferencesInfo?: string;
   uiLanguage?: "vi" | "en";
   briefingId?: string;
+  onEnded?: () => void;
 }
 
 const playerTranslations = {
@@ -90,7 +91,8 @@ export default function ManualPcmPlayer({
   title, 
   preferencesInfo, 
   uiLanguage: propUiLanguage = "vi", 
-  briefingId 
+  briefingId,
+  onEnded
 }: ManualPcmPlayerProps) {
   const { preferences: userPref, updateDrivingMode } = useUserPreferences();
   
@@ -424,6 +426,9 @@ useEffect(() => {
         elapsedOffsetRef.current = 0;
         setActiveSegmentIndex(0);
         activeSegmentIndexRef.current = 0;
+        if (onEnded) {
+          onEnded();
+        }
         return;
       }
 
