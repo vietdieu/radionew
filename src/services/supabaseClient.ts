@@ -38,10 +38,9 @@ export async function getSupabaseClientAsync(forceRetry = false): Promise<Supaba
 
       // 2. Connection Validation (lightweight health check ping)
       try {
-        const pingRes = await fetch(`${url}/rest/v1/`, {
+        const pingRes = await fetch(`${url}/auth/v1/health`, {
           headers: {
             apikey: anonKey,
-            Authorization: `Bearer ${anonKey}`,
           },
           // Keep a short 4-second timeout so it never blocks the app
           signal: AbortSignal.timeout(4000)
