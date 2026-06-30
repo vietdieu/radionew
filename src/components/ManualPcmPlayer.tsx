@@ -1144,39 +1144,39 @@ useEffect(() => {
       </div>
 
       {/* Share Control & Studio Effects Panel */}
-      <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 shadow-xs flex flex-col gap-5 sm:mt-1" id="studio-share-suite">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200/60 pb-3">
+      <div className="bg-card-bg border border-border-primary rounded-3xl p-6 shadow-xs flex flex-col gap-5 sm:mt-1" id="studio-share-suite">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border-primary/60 pb-3">
           <div>
-            <h4 className="text-sm font-bold text-slate-800 uppercase tracking-widest flex items-center gap-2">
+            <h4 className="text-sm font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
               <Sliders className="w-4 h-4 text-cyan-600 animate-pulse" />
               <span>{pt.studioCenter}</span>
             </h4>
-            <p className="text-xs text-slate-500 mt-0.5">{pt.studioDesc}</p>
+            <p className="text-xs text-text-muted mt-0.5">{pt.studioDesc}</p>
           </div>
           
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5 self-start shadow-2xs">
+          <div className="flex items-center gap-2 bg-bg-secondary border border-border-primary rounded-xl px-3 py-1.5 self-start shadow-2xs">
             <span className="relative flex h-2 w-2">
               <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                isPlaying ? "animate-ping bg-red-500" : "bg-slate-300"
+                isPlaying ? "animate-ping bg-red-500" : "bg-slate-350"
               }`}></span>
               <span className={`relative inline-flex rounded-full h-2 w-2 ${
                 isPlaying ? "bg-red-500" : "bg-slate-400"
               }`}></span>
             </span>
-            <span className="text-[10px] font-mono font-bold text-slate-600 tracking-wider">
+            <span className="text-[10px] font-mono font-bold text-text-main tracking-wider">
               {isPlaying ? "ON AIR / STREAM SYSTEM" : "STUDIO STANDBY / READY"}
             </span>
           </div>
         </div>
 
         {/* Studio Mixer */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-white border border-slate-150 rounded-2xl p-4 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-bg-secondary border border-border-primary rounded-2xl p-4 shadow-xs">
           <div className="flex flex-col gap-1 col-span-1">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 font-mono">
+            <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1 font-mono">
               <Radio className="w-3.5 h-3.5 text-cyan-500" />
               {pt.studioEfx}
             </span>
-            <span className="text-xs text-slate-500 leading-normal">
+            <span className="text-xs text-text-muted leading-normal">
               {uiLanguage === "vi" 
                 ? "Bản tin tích hợp nhạc nền không gian, hiệu ứng jingle, EQ giọng phát thanh viên chuyên nghiệp." 
                 : "Professional audio deck with space ambience, jingles, and broadcaster EQ."}
@@ -1186,11 +1186,11 @@ useEffect(() => {
           {/* Master Voice Volume */}
           <div className="flex flex-col gap-2 justify-center col-span-1">
             <div className="flex justify-between items-center">
-              <label htmlFor="volume-slider" className="text-xs font-semibold text-slate-700 flex items-center gap-1.5 select-none">
-                <Volume2 className="w-4 h-4 text-slate-400" />
+              <label htmlFor="volume-slider" className="text-xs font-semibold text-text-main flex items-center gap-1.5 select-none">
+                <Volume2 className="w-4 h-4 text-text-muted" />
                 <span>{pt.volumeLabel}</span>
               </label>
-              <span className="text-xs font-mono font-bold text-cyan-700 bg-cyan-50 border border-cyan-100 rounded-md px-2 py-0.5">
+              <span className="text-xs font-mono font-bold text-cyan-700 dark:text-cyan-450 bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-800/40 rounded-md px-2 py-0.5">
                 {Math.round(volume * 100)}%
               </span>
             </div>
@@ -1202,25 +1202,25 @@ useEffect(() => {
               step={0.05}
               value={volume}
               onChange={(e) => setVolume(parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-600 transition"
+              className="w-full h-2 bg-border-primary rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-600 transition"
             />
           </div>
 
           {/* Background Music Config */}
           <div className="flex flex-col gap-2 justify-center col-span-1">
             <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5 select-none">
+              <label className="text-xs font-semibold text-text-main flex items-center gap-1.5 select-none">
                 <Sparkles className="w-4 h-4 text-amber-500" />
                 <span>{uiLanguage === "vi" ? "Nhạc nền" : "Background"}</span>
               </label>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400">
+                <span className="text-[10px] text-text-muted">
                   {isBgMusicEnabled ? "Bật" : "Tắt"}
                 </span>
                 <button
                   onClick={() => setIsBgMusicEnabled(!isBgMusicEnabled)}
                   className={`relative w-10 h-5 rounded-full transition-colors ${
-                    isBgMusicEnabled ? "bg-cyan-500" : "bg-slate-300"
+                    isBgMusicEnabled ? "bg-cyan-500" : "bg-border-primary"
                   }`}
                 >
                   <span
@@ -1233,7 +1233,7 @@ useEffect(() => {
             </div>
             {isBgMusicEnabled && (
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400">Âm lượng</span>
+                <span className="text-[10px] text-text-muted">Âm lượng</span>
                 <input
                   type="range"
                   min={0}
@@ -1241,7 +1241,7 @@ useEffect(() => {
                   step={0.02}
                   value={bgMusicVolume}
                   onChange={(e) => setBgMusicVolume(parseFloat(e.target.value))}
-                  className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                  className="flex-1 h-1.5 bg-border-primary rounded-lg appearance-none cursor-pointer accent-amber-500"
                 />
               </div>
             )}
@@ -1249,14 +1249,14 @@ useEffect(() => {
         </div>
 
               {/* ===== QUẢN LÝ BỘ NHỚ BẢN TIN ===== */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mt-4">
+        <div className="bg-bg-secondary border border-border-primary rounded-2xl p-4 shadow-xs mt-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <h5 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+              <h5 className="text-sm font-semibold text-text-main flex items-center gap-2">
                 <span className="text-lg">💾</span>
                 Quản lý bộ nhớ bản tin
               </h5>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-text-muted mt-0.5">
                 Xóa dữ liệu cục bộ (chỉ trên máy này) để giải phóng bộ nhớ.
               </p>
             </div>
@@ -1272,52 +1272,52 @@ useEffect(() => {
             onClick={() => handleCopyTranscript()}
             className={`flex flex-col items-center justify-center p-4 rounded-2xl border text-center transition-all cursor-pointer group hover:shadow-xs active:scale-97 ${
               copied 
-                ? "bg-emerald-55/70 border-emerald-300 text-emerald-800 shadow-inner" 
-                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300"
+                ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/40 text-emerald-800 dark:text-emerald-300 shadow-inner" 
+                : "bg-bg-secondary border-border-primary text-text-main hover:bg-surface-bg hover:border-text-muted"
             }`}
           >
             {copied ? (
               <Check className="w-5 h-5 text-emerald-600 animate-bounce mb-1" />
             ) : (
-              <Copy className="w-5 h-5 text-slate-400 group-hover:text-slate-700 transition mb-1" />
+              <Copy className="w-5 h-5 text-text-muted group-hover:text-text-main transition mb-1" />
             )}
             <span className="text-xs font-bold">{copied ? pt.copySuccess : pt.copyTranscript}</span>
-            <span className="text-[9px] text-slate-400 mt-0.5">
+            <span className="text-[9px] text-text-muted mt-0.5">
               {uiLanguage === "vi" ? "Lưu toàn bộ kịch bản" : "Send whole script"}
             </span>
           </button>
 
           <button
             onClick={() => handleShareZalo()}
-            className="bg-white border border-slate-200 text-slate-700 hover:bg-[#ebf4ff] hover:border-sky-300 flex flex-col items-center justify-center p-4 rounded-2xl text-center transition-all cursor-pointer group hover:shadow-xs active:scale-97"
+            className="bg-bg-secondary border border-border-primary text-text-main hover:bg-[#ebf4ff] dark:hover:bg-sky-950/10 hover:border-sky-300 flex flex-col items-center justify-center p-4 rounded-2xl text-center transition-all cursor-pointer group hover:shadow-xs active:scale-97"
             title={uiLanguage === "vi" ? "Chia sẻ nhanh lên Zalo" : "Quick share to Zalo"}
           >
             <MessageSquare className="w-5 h-5 text-sky-500 group-hover:text-sky-600 transition mb-1" />
-            <span className="text-xs font-bold text-slate-800">{pt.shareZalo}</span>
-            <span className="text-[9px] text-slate-400 mt-0.5">via zalo.me</span>
+            <span className="text-xs font-bold text-text-main">{pt.shareZalo}</span>
+            <span className="text-[9px] text-text-muted mt-0.5">via zalo.me</span>
           </button>
 
           <button
             onClick={() => handleShareFacebook()}
-            className="bg-white border border-slate-200 text-slate-700 hover:bg-[#ecf1ff] hover:border-blue-300 flex flex-col items-center justify-center p-4 rounded-2xl text-center transition-all cursor-pointer group hover:shadow-xs active:scale-97"
+            className="bg-bg-secondary border border-border-primary text-text-main hover:bg-[#ecf1ff] dark:hover:bg-blue-950/10 hover:border-blue-300 flex flex-col items-center justify-center p-4 rounded-2xl text-center transition-all cursor-pointer group hover:shadow-xs active:scale-97"
             title={uiLanguage === "vi" ? "Chia sẻ nhanh lên Facebook" : "Quick share to Facebook"}
           >
             <Facebook className="w-5 h-5 text-blue-600 group-hover:text-blue-700 transition mb-1" />
-            <span className="text-xs font-bold text-slate-800">{pt.shareFacebook}</span>
-            <span className="text-[9px] text-slate-400 mt-0.5">via facebook.com</span>
+            <span className="text-xs font-bold text-text-main">{pt.shareFacebook}</span>
+            <span className="text-[9px] text-text-muted mt-0.5">via facebook.com</span>
           </button>
 
           {briefingId && (
             <button
               onClick={() => setIsShareModalOpen(true)}
-              className="bg-[#f0fdfa] border border-teal-200 text-teal-800 hover:bg-[#ccfbf1] hover:border-teal-300 flex flex-col items-center justify-center p-4 rounded-2xl text-center transition-all cursor-pointer group hover:shadow-sm active:scale-97"
+              className="bg-[#f0fdfa] dark:bg-teal-950/10 border border-teal-200 dark:border-teal-850 text-teal-850 dark:text-teal-400 hover:bg-[#ccfbf1] dark:hover:bg-teal-950/20 hover:border-teal-300 flex flex-col items-center justify-center p-4 rounded-2xl text-center transition-all cursor-pointer group hover:shadow-sm active:scale-97"
               title={uiLanguage === "vi" ? "Chia sẻ đa nền tảng" : "Multi-platform Share"}
             >
               <Share2 className="w-5 h-5 text-teal-600 group-hover:text-teal-700 transition mb-1 animate-pulse" />
-              <span className="text-xs font-bold text-slate-800">
+              <span className="text-xs font-bold text-text-main">
                 {uiLanguage === "vi" ? "Hộp chia sẻ lớn" : "Social Share Hub"}
               </span>
-              <span className="text-[9px] text-slate-400 mt-0.5">
+              <span className="text-[9px] text-text-muted mt-0.5">
                 {uiLanguage === "vi" ? "Twitter, WA, LinkedIn..." : "Twitter, WA, LinkedIn..."}
               </span>
             </button>
@@ -1359,13 +1359,13 @@ useEffect(() => {
         </div>
 
         {/* Guided Share & Posting helper card */}
-        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-slate-500 text-[11px] leading-relaxed relative flex items-start gap-2">
+        <div className="bg-bg-secondary border border-border-primary rounded-xl p-3 text-text-muted text-[11px] leading-relaxed relative flex items-start gap-2">
           <span className="text-amber-550 pt-0.5 text-xs animate-bounce">💡</span>
           <div>
-            <p className="font-bold text-slate-700 mb-0.5">
+            <p className="font-bold text-text-main mb-0.5">
               {uiLanguage === "vi" ? "Hướng dẫn chia sẻ & Đăng tải mạng xã hội:" : "Social Media Sharing & Posting Guide:"}
             </p>
-            <p className="text-slate-600">
+            <p className="text-text-muted">
               {uiLanguage === "vi" 
                 ? "Bấm Chia sẻ để gửi nhanh bản tin này lên Zalo hoặc Facebook. Đối với TikTok/Reels, hãy tải file âm thanh chất lượng cao (.wav) về máy, sau đó ghép âm thanh này làm nhạc nền vào video sáng tạo của bạn!"
                 : "Click Share to quickly post to Zalo or Facebook. For TikTok/Reels, download the high-quality .wav audio file first, then import/mix this background track into your video creation!"}
@@ -1375,13 +1375,13 @@ useEffect(() => {
       </div>
 
       {/* Read-Along Script Display */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+      <div className="bg-card-bg rounded-2xl border border-border-primary shadow-xs p-6 flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+          <h4 className="text-sm font-bold text-text-main uppercase tracking-wider flex items-center gap-2">
             <Layers className="w-4 h-4 text-cyan-600" />
             <span>{pt.scriptTitle}</span>
           </h4>
-          <span className="text-xs text-slate-550 font-medium">{pt.scriptSub}</span>
+          <span className="text-xs text-text-muted font-medium">{pt.scriptSub}</span>
         </div>
 
         <div className="flex flex-col gap-4 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
@@ -1395,40 +1395,40 @@ useEffect(() => {
                 onClick={() => handleChapterClick(sIdx)}
                 className={`text-left p-4 rounded-xl border transition-all duration-300 cursor-pointer group relative ${
                   isActive 
-                    ? "bg-cyan-50/40 border-cyan-500 shadow-md scale-[1.015] ring-2 ring-cyan-500/15 opacity-100 z-10" 
-                    : "bg-white border-slate-150 hover:bg-slate-50/50 hover:border-slate-300 opacity-60 hover:opacity-90 scale-100"
+                    ? "bg-cyan-500/5 dark:bg-cyan-500/10 border-cyan-500 shadow-sm scale-[1.015] ring-2 ring-cyan-500/15 opacity-100 z-10" 
+                    : "bg-bg-secondary border-border-primary hover:bg-surface-bg hover:border-text-muted opacity-60 hover:opacity-95 scale-100"
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className={`text-[10px] font-mono tracking-wider uppercase font-semibold transition-colors duration-300 ${
-                    isActive ? "text-cyan-700" : "text-slate-400"
+                    isActive ? "text-cyan-700 dark:text-cyan-400" : "text-text-muted"
                   }`}>
                     {seg.type === "intro" ? pt.labelIntro : seg.type === "outro" ? pt.labelOutro : pt.labelTopic}
                   </span>
                   
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full transition-colors duration-300 ${
-                    isActive ? "bg-cyan-100 text-cyan-700" : "bg-slate-100 text-slate-500 group-hover:bg-slate-200"
+                    isActive ? "bg-cyan-500/15 text-cyan-700 dark:text-cyan-400" : "bg-surface-bg text-text-muted group-hover:bg-bg-secondary"
                   }`}>
                     {seg.title}
                   </span>
                 </div>
 
                 <p className={`text-sm leading-relaxed transition-all duration-300 mt-2 ${
-                  isActive ? "text-slate-900 font-bold" : "text-slate-650 font-normal"
+                  isActive ? "text-text-main font-bold" : "text-text-muted font-normal"
                 }`}>
                   {seg.text}
                 </p>
 
                 {seg.bullets && seg.bullets.length > 0 && (
                   <div className={`mt-3 pl-2.5 border-l-2 transition-colors duration-300 flex flex-col gap-1.5 ${
-                    isActive ? "border-cyan-450" : "border-slate-200"
+                    isActive ? "border-cyan-400" : "border-border-primary"
                   }`}>
                     {seg.bullets.map((b, bIdx) => (
-                      <div key={bIdx} className="flex gap-2 items-start text-xs text-slate-600">
+                      <div key={bIdx} className="flex gap-2 items-start text-xs text-text-muted">
                         <FileCheck className={`w-3.5 h-3.5 mt-0.5 shrink-0 transition-colors duration-300 ${
-                          isActive ? "text-cyan-600" : "text-slate-400"
+                          isActive ? "text-cyan-600 dark:text-cyan-400" : "text-text-muted"
                         }`} />
-                        <span className={isActive ? "text-slate-800 font-medium" : ""}>{b}</span>
+                        <span className={isActive ? "text-text-main font-medium" : ""}>{b}</span>
                       </div>
                     ))}
                   </div>

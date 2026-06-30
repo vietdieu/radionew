@@ -1351,10 +1351,10 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
             {/* Realtime dynamic Language switcher toggle */}
             <button
               onClick={() => setUiLanguage((prev) => (prev === "vi" ? "en" : "vi"))}
-              className="px-3.5 py-1.5 bg-cyan-500 text-slate-950 hover:bg-cyan-400 text-xs font-bold rounded-lg transition-all shadow-sm flex items-center gap-2 cursor-pointer border border-cyan-300/30"
+              className="px-3.5 py-1.5 bg-surface-bg hover:bg-bg-secondary border border-border-primary text-text-main hover:text-brand-accent text-xs font-semibold rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
               title="Bấm để chuyển đổi ngôn ngữ giao diện / Click to toggle UI language"
             >
-              <Languages className="w-4 h-4" />
+              <Languages className="w-4 h-4 text-brand-accent" />
               <span>{t.switchLangButton}</span>
             </button>
 
@@ -1362,12 +1362,12 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
             {typeof window !== "undefined" && "Notification" in window && (
 <button
   onClick={() => requestNotificationPermission()}
-  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border shadow-sm ${
+  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer border shadow-xs ${
     notificationPermission === "granted"
-      ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25"
+      ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40 text-emerald-850 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/40"
       : notificationPermission === "denied"
-      ? "bg-rose-500/15 border-rose-500/30 text-rose-400 hover:bg-rose-500/25"
-      : "bg-amber-500/15 border-amber-500/30 text-amber-400 hover:bg-amber-500/25 animate-pulse"
+      ? "bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/40 text-rose-850 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/40"
+      : "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/40 text-amber-850 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-100/40 animate-pulse"
   }`}
   title={
     notificationPermission === "granted"
@@ -1379,17 +1379,17 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
 >
   {notificationPermission === "granted" ? (
     <>
-      <BellRing className="w-4 h-4 text-emerald-400" />
+      <BellRing className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
       <span>{t.notificationGranted}</span>
     </>
   ) : notificationPermission === "denied" ? (
     <>
-      <BellOff className="w-4 h-4 text-rose-400" />
+      <BellOff className="w-4 h-4 text-rose-600 dark:text-rose-400" />
       <span>{t.notificationBlocked}</span>
     </>
   ) : (
     <>
-      <Bell className="w-4 h-4 text-amber-400" />
+      <Bell className="w-4 h-4 text-amber-600 dark:text-amber-400" />
       <span>{t.notificationBtnEnable}</span>
     </>
   )}
@@ -1399,10 +1399,10 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
             {/* Driving Mode Toggle Badge */}
             <button
               onClick={() => toggleDrivingMode()}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border shadow-sm ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer border shadow-xs ${
                 userPref.isDrivingMode
-                  ? "bg-amber-500 text-slate-950 hover:bg-amber-400 border-amber-300/30 font-extrabold"
-                  : "bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700/60 font-semibold"
+                  ? "bg-amber-500 hover:bg-amber-600 text-slate-950 border-amber-400/40 font-extrabold"
+                  : "bg-surface-bg hover:bg-bg-secondary text-text-main border-border-primary hover:text-amber-500"
               }`}
               title={
                 uiLanguage === "vi" 
@@ -1410,13 +1410,13 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   : "Toggle Driving Mode"
               }
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${userPref.isDrivingMode ? "bg-slate-950 animate-ping" : "bg-amber-400"}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${userPref.isDrivingMode ? "bg-slate-950 animate-ping" : "bg-amber-500 dark:bg-amber-400"}`} />
               <span>{uiLanguage === "vi" ? "Chế Độ Lái Xe" : "Driving Mode"}</span>
             </button>
 
-            <span className="bg-slate-800/80 px-3 py-1.5 rounded-full border border-slate-700/60 text-xs flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-slate-300 font-mono text-[10px]">{t.statusBadge}</span>
+            <span className="bg-surface-bg px-3 py-1.5 rounded-full border border-border-primary text-xs flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
+              <span className="text-text-muted font-mono text-[10px]">{t.statusBadge}</span>
             </span>
           </div>
         </div>
@@ -2035,13 +2035,13 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         <section className="md:col-span-5 flex flex-col gap-6" id="output-panel-desktop">
           
           {/* Pro AI Assistant Dashboard Tab Bar */}
-          <div className="flex bg-slate-100 dark:bg-slate-900/60 p-1 rounded-2xl border border-slate-200/50 dark:border-slate-800" id="pro-ai-tabs">
+          <div className="flex bg-bg-secondary p-1 rounded-2xl border border-border-primary" id="pro-ai-tabs">
             <button
               onClick={() => setRightTab("player")}
               className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 rightTab === "player"
-                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  ? "bg-card-bg text-cyan-600 dark:text-cyan-400 shadow-xs border border-border-primary/50"
+                  : "text-text-muted hover:text-text-main"
               }`}
             >
               <Volume2 className="w-4 h-4" />
@@ -2051,8 +2051,8 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               onClick={() => setRightTab("queue")}
               className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 rightTab === "queue"
-                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  ? "bg-card-bg text-cyan-600 dark:text-cyan-400 shadow-xs border border-border-primary/50"
+                  : "text-text-muted hover:text-text-main"
               }`}
             >
               <ListMusic className="w-4 h-4" />
@@ -2062,8 +2062,8 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               onClick={() => setRightTab("stats")}
               className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 rightTab === "stats"
-                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  ? "bg-card-bg text-cyan-600 dark:text-cyan-400 shadow-xs border border-border-primary/50"
+                  : "text-text-muted hover:text-text-main"
               }`}
             >
               <Clock className="w-4 h-4" />
@@ -2073,8 +2073,8 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               onClick={() => setRightTab("settings")}
               className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 rightTab === "settings"
-                  ? "bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  ? "bg-card-bg text-cyan-600 dark:text-cyan-400 shadow-xs border border-border-primary/50"
+                  : "text-text-muted hover:text-text-main"
               }`}
             >
               <Settings className="w-4 h-4" />
@@ -2086,21 +2086,21 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
             <div className="flex flex-col gap-6 animate-fade-in">
               {/* Active status loaders */}
               {step === "summarizing" && (
-                <div className="bg-slate-900 text-white p-8 rounded-3xl border border-slate-800 text-center shadow-2xl flex flex-col items-center justify-center min-h-[310px]">
+                <div className="bg-card-bg p-8 rounded-3xl border border-border-primary text-center shadow-lg flex flex-col items-center justify-center min-h-[310px]">
                   <div className="relative mb-6">
                     <div className="w-16 h-16 rounded-full border-4 border-cyan-500 border-t-transparent animate-spin" />
-                    <Settings2 className="w-6 h-6 text-cyan-400 absolute top-5 left-5 animate-pulse" />
+                    <Settings2 className="w-6 h-6 text-cyan-500 absolute top-5 left-5 animate-pulse" />
                   </div>
-                  <h3 className="text-lg font-bold">{t.draftingTitle}</h3>
-                  <p className="text-xs text-slate-400 mt-2.5 max-w-xs leading-relaxed mb-4">
+                  <h3 className="text-lg font-bold text-text-main">{t.draftingTitle}</h3>
+                  <p className="text-xs text-text-muted mt-2.5 max-w-xs leading-relaxed mb-4">
                     {generationProgress}
                   </p>
                   {targetNewsTitle && (
-                    <div className="w-full max-w-sm px-4 py-3 bg-slate-800/80 border border-slate-700/60 rounded-2xl text-left animate-fade-in">
-                      <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest block mb-1">
+                    <div className="w-full max-w-sm px-4 py-3 bg-bg-secondary border border-border-primary rounded-2xl text-left animate-fade-in">
+                      <span className="text-[10px] font-black text-cyan-600 dark:text-cyan-400 uppercase tracking-widest block mb-1">
                         {uiLanguage === "vi" ? "ĐANG SOẠN THẢO BẢN TIN:" : "COMPILING ARTICLE:"}
                       </span>
-                      <p className="text-xs font-semibold text-slate-100 line-clamp-2 leading-relaxed">
+                      <p className="text-xs font-semibold text-text-main line-clamp-2 leading-relaxed">
                         {targetNewsTitle}
                       </p>
                     </div>
@@ -2109,21 +2109,21 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               )}
 
               {step === "synthesizing" && (
-                <div className="bg-slate-900 text-white p-8 rounded-3xl border border-slate-800 text-center shadow-2xl flex flex-col items-center justify-center min-h-[310px]">
+                <div className="bg-card-bg p-8 rounded-3xl border border-border-primary text-center shadow-lg flex flex-col items-center justify-center min-h-[310px]">
                   <div className="relative mb-6">
                     <div className="w-16 h-16 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
-                    <Volume2 className="w-6 h-6 text-amber-350 absolute top-5 left-5 animate-bounce" />
+                    <Volume2 className="w-6 h-6 text-amber-500 absolute top-5 left-5 animate-bounce" />
                   </div>
-                  <h3 className="text-lg font-bold">{t.synthesizingTitle}</h3>
-                  <p className="text-xs text-slate-400 mt-2.5 max-w-xs leading-relaxed mb-4">
+                  <h3 className="text-lg font-bold text-text-main">{t.synthesizingTitle}</h3>
+                  <p className="text-xs text-text-muted mt-2.5 max-w-xs leading-relaxed mb-4">
                     {generationProgress}
                   </p>
                   {(activeTitle || targetNewsTitle) && (
-                    <div className="w-full max-w-sm px-4 py-3 bg-slate-800/80 border border-slate-700/60 rounded-2xl text-left animate-fade-in">
-                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest block mb-1">
+                    <div className="w-full max-w-sm px-4 py-3 bg-bg-secondary border border-border-primary rounded-2xl text-left animate-fade-in">
+                      <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest block mb-1">
                         {uiLanguage === "vi" ? "TIÊU ĐỀ BẢN TIN PHÁT THANH:" : "AUDIO BRIEFING TITLE:"}
                       </span>
-                      <p className="text-xs font-semibold text-slate-150 line-clamp-2 leading-relaxed">
+                      <p className="text-xs font-semibold text-text-main line-clamp-2 leading-relaxed">
                         {activeTitle || targetNewsTitle}
                       </p>
                     </div>

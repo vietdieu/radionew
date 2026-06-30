@@ -440,9 +440,9 @@ export default function RSSManager({
         </div>
 
         {/* Subscription / Editing Form */}
-        <form onSubmit={handleSaveFeed} className="space-y-3 p-4 bg-slate-50 border border-slate-200/80 rounded-2xl">
+        <form onSubmit={handleSaveFeed} className="space-y-3 p-4 bg-bg-secondary border border-border-primary rounded-2xl">
           <div className="text-left">
-            <span className="text-[10px] font-extrabold text-cyan-600 bg-cyan-50 border border-cyan-100 rounded-md px-2 py-0.5 uppercase tracking-wide">
+            <span className="text-[10px] font-extrabold text-cyan-700 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-800/40 rounded-md px-2 py-0.5 uppercase tracking-wide">
               {editingFeedId ? (uiLanguage === "vi" ? "Đang sửa nguồn" : "Editing Feed") : (uiLanguage === "vi" ? "Thêm nguồn mới" : "Add New Feed")}
             </span>
           </div>
@@ -455,7 +455,7 @@ export default function RSSManager({
                 onChange={(e) => setNewUrl(e.target.value)}
                 placeholder={t.inputUrlPlaceholder}
                 required
-                className="bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-medium"
+                className="bg-card-bg border border-border-primary text-xs px-3.5 py-2.5 rounded-xl text-text-main placeholder-text-muted focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-medium"
               />
             </div>
 
@@ -465,7 +465,7 @@ export default function RSSManager({
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 placeholder={t.inputTitlePlaceholder}
-                className="bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-medium"
+                className="bg-card-bg border border-border-primary text-xs px-3.5 py-2.5 rounded-xl text-text-main placeholder-text-muted focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-medium"
               />
             </div>
           </div>
@@ -475,13 +475,13 @@ export default function RSSManager({
             <div className="flex flex-wrap items-center gap-3">
               {/* Category Dropdown */}
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
                   {uiLanguage === "vi" ? "Chủ đề:" : "Topic:"}
                 </span>
                 <select
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value)}
-                  className="bg-white border border-slate-200 text-[11px] px-2.5 py-1.5 rounded-lg focus:outline-none font-semibold text-slate-700"
+                  className="bg-card-bg border border-border-primary text-[11px] px-2.5 py-1.5 rounded-lg focus:outline-none font-semibold text-text-main cursor-pointer"
                 >
                   <option value="Thời sự">{uiLanguage === "vi" ? "📰 Thời sự" : "📰 General News"}</option>
                   <option value="Công nghệ">{uiLanguage === "vi" ? "💻 Công nghệ" : "💻 Tech"}</option>
@@ -494,13 +494,13 @@ export default function RSSManager({
 
               {/* Feed Type Dropdown */}
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
                   {uiLanguage === "vi" ? "Loại:" : "Style:"}
                 </span>
                 <select
                   value={newFeedType}
                   onChange={(e) => setNewFeedType(e.target.value as any)}
-                  className="bg-white border border-slate-200 text-[11px] px-2.5 py-1.5 rounded-lg focus:outline-none font-semibold text-slate-700"
+                  className="bg-card-bg border border-border-primary text-[11px] px-2.5 py-1.5 rounded-lg focus:outline-none font-semibold text-text-main cursor-pointer"
                 >
                   <option value="news">{uiLanguage === "vi" ? "📰 Tin tức" : "📰 News"}</option>
                   <option value="podcast">{uiLanguage === "vi" ? "🎙️ Podcast" : "🎙️ Podcast"}</option>
@@ -514,7 +514,7 @@ export default function RSSManager({
                 <button
                   type="button"
                   onClick={() => handleCancelEdit()}
-                  className="px-3 py-2 bg-slate-200 hover:bg-slate-350 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                  className="px-3 py-2 bg-border-primary hover:bg-bg-secondary text-text-main text-xs font-bold rounded-xl transition cursor-pointer"
                 >
                   {t.btnCancelEdit}
                 </button>
@@ -523,11 +523,11 @@ export default function RSSManager({
               <button
                 type="submit"
                 disabled={isTesting}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-4 py-2 bg-text-main hover:bg-text-main/90 disabled:opacity-50 text-card-bg text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 {isTesting ? (
                   <>
-                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span className="w-3 h-3 border-2 border-card-bg border-t-transparent rounded-full animate-spin" />
                     <span>{t.btnTesting}</span>
                   </>
                 ) : (
@@ -689,27 +689,27 @@ export default function RSSManager({
 
       {/* 3. Direct Full Synthesis helper if no articles selected but articles loaded */}
       {activeArticles.length > 0 && selectedArticles.length === 0 && (
-        <div className="bg-slate-950 text-slate-100 p-5 rounded-2xl border border-slate-800 text-left space-y-4 shadow-md animate-fade-in">
+        <div className="bg-card-bg text-text-main p-5 rounded-2xl border border-border-primary text-left space-y-4 shadow-md animate-fade-in">
           <div className="flex justify-between items-center">
-            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 animate-pulse" />
               <span>{uiLanguage === "vi" ? "Tự động phát thanh" : "Smart Broadcast Suite"}</span>
             </span>
           </div>
           
           <div className="space-y-2">
-            <p className="text-[11px] text-slate-300 leading-normal">
+            <p className="text-[11px] text-text-muted leading-normal">
               {uiLanguage === "vi" 
                 ? `Hệ thống đã đồng bộ được ${activeArticles.length} bài viết mới từ các nguồn tin của bạn. Chọn phương thức tạo bản tin phù hợp dưới đây:` 
                 : `Successfully aggregated ${activeArticles.length} active articles. Select your preferred broadcast method below:`}
             </p>
             
             {/* OPTION 1: FULL BRIEFING */}
-            <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800/80 space-y-2 text-left">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary space-y-2 text-left">
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
                 {uiLanguage === "vi" ? "Lựa chọn 1: Toàn bộ nguồn tin" : "Option 1: Complete feeds"}
               </span>
-              <p className="text-[10px] text-slate-400 leading-relaxed">
+              <p className="text-[10px] text-text-muted leading-relaxed">
                 {uiLanguage === "vi"
                   ? "Tóm tắt và nghe toàn bộ tất cả các bài viết đã đồng bộ (phù hợp khi số lượng tin vừa phải)."
                   : "Summarize and generate voice for all synchronized articles (best for normal volumes)."}
@@ -726,26 +726,26 @@ export default function RSSManager({
             </div>
 
             {/* OPTION 2: LATEST BRIEF BRIEFING (CUSTOM FEEDS) */}
-            <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800/80 space-y-3 text-left">
-              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+            <div className="p-3 bg-bg-secondary rounded-xl border border-border-primary space-y-3 text-left">
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
                 {uiLanguage === "vi" ? "Lựa chọn 2: Bản tin vắn tắt mới nhất (Khuyên Dùng)" : "Option 2: Latest Short Briefing (Recommended)"}
               </span>
-              <p className="text-[10px] text-slate-400 leading-relaxed">
+              <p className="text-[10px] text-text-muted leading-relaxed">
                 {uiLanguage === "vi"
                   ? "Chỉ tóm tắt số lượng tin tức mới nhất theo cấu hình lọc bên dưới để tránh quá tải TTS và ngốn hạn ngạch."
                   : "Filter and summarize only a fixed number of recent articles to stay within TTS rate limits."}
               </p>
 
               {/* Controls inside option 2 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1 border-t border-slate-800/40">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-1 border-t border-border-primary">
                 <div className="space-y-1">
-                  <label className="text-slate-400 font-medium text-[10px]">
+                  <label className="text-text-muted font-medium text-[10px]">
                     {uiLanguage === "vi" ? "Số lượng tin tối đa:" : "Max articles:"}
                   </label>
                   <select
                     value={briefCount}
                     onChange={(e) => setBriefCount(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none cursor-pointer"
+                    className="w-full bg-card-bg border border-border-primary rounded-lg px-2 py-1 text-text-main text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none cursor-pointer"
                   >
                     <option value={3}>3 {uiLanguage === "vi" ? "bài viết mới" : "news items"}</option>
                     <option value={5}>5 {uiLanguage === "vi" ? "bài viết mới" : "news items"}</option>
@@ -756,13 +756,13 @@ export default function RSSManager({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-slate-400 font-medium text-[10px]">
+                  <label className="text-text-muted font-medium text-[10px]">
                     {uiLanguage === "vi" ? "Lọc thời gian:" : "Timeframe:"}
                   </label>
                   <select
                     value={briefDateType}
                     onChange={(e) => setBriefDateType(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none cursor-pointer"
+                    className="w-full bg-card-bg border border-border-primary rounded-lg px-2 py-1 text-text-main text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none cursor-pointer"
                   >
                     <option value="all">{uiLanguage === "vi" ? "Tất cả các tin" : "All articles"}</option>
                     <option value="today">{uiLanguage === "vi" ? "Hôm nay" : "Today"}</option>
@@ -773,27 +773,27 @@ export default function RSSManager({
 
               {/* Date pickers */}
               {briefDateType === "range" && (
-                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] border-t border-slate-800/40">
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] border-t border-border-primary">
                   <div className="space-y-1 text-left">
-                    <label className="text-slate-400 font-medium text-[9px]">
+                    <label className="text-text-muted font-medium text-[9px]">
                       {uiLanguage === "vi" ? "Từ ngày:" : "From:"}
                     </label>
                     <input
                       type="date"
                       value={briefStartDate}
                       onChange={(e) => setBriefStartDate(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-0.5 text-slate-200 text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none"
+                      className="w-full bg-card-bg border border-border-primary rounded-lg px-2 py-0.5 text-text-main text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none"
                     />
                   </div>
                   <div className="space-y-1 text-left">
-                    <label className="text-slate-400 font-medium text-[9px]">
+                    <label className="text-text-muted font-medium text-[9px]">
                       {uiLanguage === "vi" ? "Đến ngày:" : "To:"}
                     </label>
                     <input
                       type="date"
                       value={briefEndDate}
                       onChange={(e) => setBriefEndDate(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-0.5 text-slate-200 text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none"
+                      className="w-full bg-card-bg border border-border-primary rounded-lg px-2 py-0.5 text-text-main text-xs focus:ring-1 focus:ring-cyan-500 focus:outline-none"
                     />
                   </div>
                 </div>

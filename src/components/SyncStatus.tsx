@@ -55,7 +55,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
       return {
         icon: <RefreshCw className="w-4 h-4 text-cyan-500 animate-spin" />,
         text: queueLength > 0 ? `${dict.syncing} (${queueLength} ${dict.pending})` : dict.syncing,
-        bg: "bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/50 text-cyan-600 dark:text-cyan-300",
+        bg: "bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/50 text-cyan-800 dark:text-cyan-300",
         actionBtn: null,
         title: "Synchronization in progress"
       };
@@ -66,7 +66,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
         return {
           icon: <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" />,
           text: uiLanguage === "vi" ? "Đang khởi tạo..." : "Initializing...",
-          bg: "bg-slate-50 dark:bg-slate-950/30 border border-slate-200 dark:border-slate-800/50 text-slate-600 dark:text-slate-400",
+          bg: "bg-slate-50 dark:bg-slate-950/30 border border-slate-200 dark:border-slate-800/50 text-slate-700 dark:text-slate-300",
           actionBtn: null,
           title: "Initializing Supabase Cloud Connection..."
         };
@@ -74,7 +74,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
         return {
           icon: <CloudOff className="w-4 h-4 text-slate-400" />,
           text: dict.offline,
-          bg: "bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400",
+          bg: "bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300",
           actionBtn: null,
           title: dict.explainLocal
         };
@@ -82,7 +82,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
         return {
           icon: <CloudLightning className="w-4 h-4 text-rose-500 animate-pulse" />,
           text: dict.misconfigured,
-          bg: "bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/50 text-rose-600 dark:text-rose-400",
+          bg: "bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/50 text-rose-800 dark:text-rose-300",
           actionBtn: null,
           title: dict.explainMisconfigured
         };
@@ -97,15 +97,15 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
             ? `${queueLength} ${dict.pending}` 
             : dict.connected,
           bg: queueLength > 0 
-            ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 text-amber-600 dark:text-amber-300"
-            : "bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400",
+            ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 text-amber-800 dark:text-amber-300"
+            : "bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 text-emerald-800 dark:text-emerald-300",
           actionBtn: (
             <button
               onClick={triggerSync}
               className={`ml-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all duration-200 hover:scale-[1.03] active:scale-95 cursor-pointer ${
                 queueLength > 0 
                   ? "bg-amber-500 hover:bg-amber-600 text-slate-950" 
-                  : "bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                  : "bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
               }`}
             >
               {dict.syncNow}
@@ -118,7 +118,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
         return {
           icon: <Database className="w-4 h-4 text-amber-500" />,
           text: dict.localOnly,
-          bg: "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 text-amber-600 dark:text-amber-400",
+          bg: "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 text-amber-800 dark:text-amber-300",
           actionBtn: user ? (
             <button
               onClick={triggerSync}

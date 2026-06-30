@@ -106,15 +106,15 @@ export default function UserProfile({
   const getSyncBg = () => {
     switch (syncStatus) {
       case "synced":
-        return "bg-emerald-950/40 border border-emerald-800/60 text-emerald-300";
+        return "bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 text-emerald-800 dark:text-emerald-300";
       case "syncing":
-        return "bg-cyan-950/40 border border-cyan-800/60 text-cyan-300";
+        return "bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800/40 text-cyan-800 dark:text-cyan-300";
       case "offline":
-        return "bg-slate-900 border border-slate-800 text-slate-400";
+        return "bg-surface-bg border border-border-primary text-text-muted";
       case "error":
-        return "bg-rose-950/40 border border-rose-800/60 text-rose-300";
+        return "bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/40 text-rose-800 dark:text-rose-300";
       default:
-        return "bg-slate-900 border border-slate-800 text-slate-500";
+        return "bg-surface-bg border border-border-primary text-text-muted";
     }
   };
 
@@ -137,7 +137,7 @@ export default function UserProfile({
           {syncStatus === "syncing" && onAbortSync && (
             <button
               onClick={handleAbortSync}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold bg-rose-950/40 border border-rose-800/60 text-rose-300 hover:bg-rose-950/60 transition-all hover:scale-105 active:scale-95"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/40 text-rose-800 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/40 transition-all hover:scale-105 active:scale-95"
               title={u.abortSync}
             >
               <XCircle className="w-4 h-4" />
@@ -148,7 +148,7 @@ export default function UserProfile({
           {/* User Button */}
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="w-9 h-9 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 hover:text-white hover:border-slate-500 transition cursor-pointer"
+            className="w-9 h-9 rounded-full bg-surface-bg border border-border-primary flex items-center justify-center text-text-muted hover:text-text-main hover:border-text-muted transition cursor-pointer"
           >
             <User className="w-4 h-4" />
           </button>
@@ -160,18 +160,18 @@ export default function UserProfile({
                 className="fixed inset-0 z-40" 
                 onClick={() => setDropdownOpen(false)}
               />
-              <div className="absolute right-0 top-11 bg-slate-900 border border-slate-800 rounded-2xl w-56 py-2 shadow-2xl z-50 animate-fade-in text-xs text-slate-300">
-                <div className="px-4 py-2 border-b border-slate-800">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{u.greeting}</p>
-                  <p className="font-bold text-white truncate mt-0.5" title={user.email}>{user.email}</p>
+              <div className="absolute right-0 top-11 bg-card-bg border border-border-primary rounded-2xl w-56 py-2 shadow-2xl z-50 animate-fade-in text-xs text-text-main">
+                <div className="px-4 py-2 border-b border-border-primary">
+                  <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider">{u.greeting}</p>
+                  <p className="font-bold text-text-main truncate mt-0.5" title={user.email}>{user.email}</p>
                 </div>
                 
                 <button
                   onClick={() => { onSync(); setDropdownOpen(false); }}
-                  className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 transition cursor-pointer font-medium text-slate-200"
+                  className="w-full text-left px-4 py-2.5 hover:bg-bg-secondary flex items-center gap-2.5 transition cursor-pointer font-medium text-text-main"
                   disabled={syncStatus === "syncing"}
                 >
-                  <RefreshCw className="w-4 h-4 text-cyan-400" />
+                  <RefreshCw className="w-4 h-4 text-brand-accent" />
                   <span>{u.syncNow}</span>
                 </button>
 
@@ -179,7 +179,7 @@ export default function UserProfile({
                 {syncStatus === "syncing" && onAbortSync && (
                   <button
                     onClick={handleAbortSync}
-                    className="w-full text-left px-4 py-2.5 hover:bg-rose-950/30 text-rose-400 hover:text-rose-300 flex items-center gap-2.5 transition cursor-pointer font-bold border-t border-slate-800"
+                    className="w-full text-left px-4 py-2.5 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-750 dark:text-rose-400 flex items-center gap-2.5 transition cursor-pointer font-bold border-t border-border-primary"
                   >
                     <XCircle className="w-4 h-4" />
                     <span>{u.abortSync}</span>
@@ -188,7 +188,7 @@ export default function UserProfile({
 
                 <button
                   onClick={() => handleSignOut()}
-                  className="w-full text-left px-4 py-2.5 hover:bg-rose-950/30 text-rose-400 hover:text-rose-300 flex items-center gap-2.5 transition cursor-pointer font-bold border-t border-slate-800"
+                  className="w-full text-left px-4 py-2.5 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-750 dark:text-rose-400 flex items-center gap-2.5 transition cursor-pointer font-bold border-t border-border-primary"
                 >
                   <LogOut className="w-4 h-4" />
                   <span>{u.signOutBtn}</span>
@@ -200,9 +200,9 @@ export default function UserProfile({
       ) : (
         <button
           onClick={() => setIsLoginOpen(true)}
-          className="bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:border-slate-700 text-slate-300 hover:text-white px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-lg active:scale-95"
+          className="bg-surface-bg border border-border-primary hover:bg-bg-secondary text-text-main hover:text-brand-accent px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-sm active:scale-95"
         >
-          <Key className="w-3.5 h-3.5 text-cyan-400" />
+          <Key className="w-3.5 h-3.5 text-brand-accent" />
           <span>{u.signInBtn}</span>
         </button>
       )}
