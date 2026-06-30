@@ -12,7 +12,9 @@ import {
   Eye, 
   Activity, 
   SlidersHorizontal,
-  FolderSync
+  FolderSync,
+  Laptop,
+  BookOpen
 } from "lucide-react";
 import { 
   getFeatureSettings, 
@@ -27,6 +29,7 @@ import {
   AccessibilityConfig 
 } from "../types";
 import { useUserPreferences, DefaultLanguage, PreferedVoice, ReadSpeed } from "../../components/UserPreferencesProvider";
+import { useTheme, ThemeMode } from "../../components/ThemeProvider";
 
 interface SettingsCenterProps {
   uiLanguage?: "vi" | "en";
@@ -38,25 +41,8 @@ export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsC
   
   // Feature states loaded from centralized feature store
   const [featureSettings, setFeatureSettings] = useState<FeatureSettings>(getFeatureSettings());
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const { theme, setTheme } = useTheme();
   const [clearedMemorySuccess, setClearedMemorySuccess] = useState(false);
-
-  useEffect(() => {
-    // Check dark mode state
-    if (typeof document !== "undefined") {
-      setIsDarkMode(document.documentElement.classList.contains("dark"));
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    if (typeof document !== "undefined") {
-      const isDark = document.documentElement.classList.toggle("dark");
-      setIsDarkMode(isDark);
-      try {
-        localStorage.setItem("theme", isDark ? "dark" : "light");
-      } catch {}
-    }
-  };
 
   const updateVoiceProfileValue = <K extends keyof VoiceProfile>(key: K, value: VoiceProfile[K]) => {
     const updatedProfile = { ...featureSettings.voiceProfile, [key]: value };
@@ -97,10 +83,10 @@ export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsC
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col text-left" id="settings-center-panel">
-      <div className="flex items-center gap-2 mb-6 border-b border-slate-100 dark:border-slate-800 pb-4">
-        <Settings className="w-5 h-5 text-indigo-500" />
-        <h3 className="font-bold text-slate-800 dark:text-slate-200">
+    <div className="bg-card-bg p-6 rounded-3xl border border-border-primary shadow-xl flex flex-col text-left text-text-main" id="settings-center-panel">
+      <div className="flex items-center gap-2 mb-6 border-b border-border-primary pb-4">
+        <Settings className="w-5 h-5 text-brand-accent animate-pulse-subtle" />
+        <h3 className="font-bold text-text-main">
           {uiLanguage === "vi" ? "Trung Tâm Cài Đặt" : "Control & Settings Center"}
         </h3>
       </div>
@@ -196,18 +182,40 @@ export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsC
             <span>{uiLanguage === "vi" ? "Giao diện & Ngôn ngữ" : "Theme & Language settings"}</span>
           </h4>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-150 dark:border-slate-800">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                {uiLanguage === "vi" ? "Chế độ tối (Dark Mode)" : "Dark Visual Theme"}
-              </span>
-              <button
-                onClick={toggleTheme}
-                className="p-2.5 rounded-lg bg-slate-200 dark:bg-slate-850 text-slate-700 dark:text-slate-300 hover:brightness-110 transition flex items-center justify-center"
-                style={{ minWidth: "44px", minHeight: "44px" }}
-              >
-                {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              </button>
+          <div className="space-y-4">
+            {/* 4-Theme Selection Grid */}
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-2">
+                {uiLanguage === "vi" ? "Chủ đề giao diện (Theme)" : "Appearance Theme"}
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: "light", icon: Sun, labelVi: "Sáng", labelEn: "Light" },
+                  { id: "dark", icon: Moon, labelVi: "Tối", labelEn: "Dark" },
+                  { id: "eyecare", icon: BookOpen, labelVi: "Dịu mắt", labelEn: "Eye Care" },
+                  { id: "auto", icon: Laptop, labelVi: "Tự động", labelEn: "Auto" }
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isActive = theme === item.id;
+                  const label = uiLanguage === "vi" ? item.labelVi : item.labelEn;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setTheme(item.id as ThemeMode)}
+                      aria-pressed={isActive}
+                      className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-200 cursor-pointer text-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-cyan-500 ${
+                        isActive
+                          ? "bg-cyan-500/10 dark:bg-cyan-400/15 border-cyan-500 text-cyan-600 dark:text-cyan-400 font-bold scale-[1.02]"
+                          : "bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-850"
+                      }`}
+                      style={{ minHeight: "56px" }}
+                    >
+                      <Icon className="w-4 h-4" />
+                      <span className="text-[10px] sm:text-xs tracking-tight">{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-150 dark:border-slate-800">
@@ -217,7 +225,7 @@ export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsC
               <select
                 value={preferences.language}
                 onChange={(e) => updateLanguage(e.target.value as DefaultLanguage)}
-                className="bg-transparent border-0 text-xs text-right font-bold focus:ring-0 text-cyan-600 focus:outline-none"
+                className="bg-transparent border-0 text-xs text-right font-bold focus:ring-0 text-cyan-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded"
                 style={{ minHeight: "44px" }}
               >
                 <option value="vi">Tiếng Việt</option>

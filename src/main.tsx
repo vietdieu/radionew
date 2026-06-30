@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.tsx';
 import './index.css';
 import { UserPreferencesProvider } from './components/UserPreferencesProvider.tsx';
+import { ThemeProvider } from './components/ThemeProvider.tsx';
 
 // Đăng ký Service Worker cho PWA chế độ offline
 if ('serviceWorker' in navigator) {
@@ -21,9 +22,11 @@ if ('serviceWorker' in navigator) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <UserPreferencesProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </ThemeProvider>
     </UserPreferencesProvider>
   </StrictMode>,
 );

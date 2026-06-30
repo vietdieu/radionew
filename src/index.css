@@ -1,11 +1,72 @@
 @import "tailwindcss";
 
+:root {
+  /* Light theme by default */
+  --background-primary: #f8fafc;
+  --background-secondary: #f1f5f9;
+  --card: #ffffff;
+  --surface: #f1f5f9;
+  --border: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --brand: #06b6d4;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --radius: 1.5rem;
+}
+
+[data-theme="dark"] {
+  /* Premium Dark Mode: ChatGPT / Spotify feel */
+  --background-primary: #0f172a; /* Slate canvas */
+  --background-secondary: #0b0f19; /* Deeper canvas back */
+  --card: #111827; /* Rich deep slate gray */
+  --surface: #1e293b; /* Premium surface */
+  --border: #1f2937; /* Clean borders */
+  --text-primary: #f8fafc; /* Crisp text */
+  --text-secondary: #94a3b8; /* Muted slate */
+  --brand: #22d3ee; /* Bright cyan accent */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="eyecare"] {
+  /* Soft Kindle / Paper feel */
+  --background-primary: #f5efeb; /* Warm vintage paper background */
+  --background-secondary: #eadfc9; /* Slightly deeper paper */
+  --card: #fffdf9; /* Soft cream card background */
+  --surface: #faf2e5; /* Warm surface accent */
+  --border: #decfa6; /* Soft amber-brown border */
+  --text-primary: #2d251e; /* Deep charcoal/brown readability ink */
+  --text-secondary: #6e6259; /* Medium charcoal-brown */
+  --brand: #d97706; /* Warm amber bronze accent */
+  --success: #15803d;
+  --warning: #b45309;
+  --danger: #b91c1c;
+  --shadow: 0 4px 6px -1px rgba(45, 37, 30, 0.08);
+}
+
 @theme {
   --color-brand-cyan: #06b6d4;
   --color-brand-indigo: #4f46e5;
   --color-dark-bg: #0b0f19;
   --color-dark-surface: #111827;
   --color-dark-border: #1f2937;
+  
+  --color-bg-primary: var(--background-primary);
+  --color-bg-secondary: var(--background-secondary);
+  --color-card-bg: var(--card);
+  --color-surface-bg: var(--surface);
+  --color-border-primary: var(--border);
+  --color-text-main: var(--text-primary);
+  --color-text-muted: var(--text-secondary);
+  --color-brand-accent: var(--brand);
+  --color-success-val: var(--success);
+  --color-warning-val: var(--warning);
+  --color-danger-val: var(--danger);
   
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -110,4 +171,27 @@ input, select, textarea {
   transform: translateY(-2px);
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
 }
+
+/* Global body theme transitions and styles */
+body {
+  background-color: var(--background-primary);
+  color: var(--text-primary);
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+/* Scrollbar adjustments based on themes */
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="eyecare"] ::-webkit-scrollbar-thumb {
+  background: rgba(45, 37, 30, 0.15);
+}
+[data-theme="eyecare"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(45, 37, 30, 0.3);
+}
+
 

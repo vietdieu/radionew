@@ -402,9 +402,12 @@ export default function App() {
         } else {
           console.warn("Expected JSON response but received different Content-Type:", contentType);
         }
+      } else {
+        console.warn("Could not load podcast episodes, response status:", res.status);
       }
-    } catch (err) {
-      console.error("Failed to load podcast episodes:", err);
+    } catch (err: any) {
+      console.warn("Could not retrieve podcast episodes gracefully:", err.message || err);
+      setPodcastEpisodes([]);
     }
   };
 
@@ -1310,23 +1313,23 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               )}
             </AnimatePresence>
 
-            <div className={`min-h-screen bg-slate-50 text-slate-900 font-sans ${userPref.isDrivingMode ? "hidden" : ""}`} id="audio-commute-root">
+            <div className={`min-h-screen bg-bg-primary text-text-main font-sans transition-colors duration-200 ${userPref.isDrivingMode ? "hidden" : ""}`} id="audio-commute-root">
       
       {/* Premium Visual Header Grid Panel */}
-      <header className="bg-gradient-to-r from-slate-950 via-slate-900 to-cyan-950 text-white shadow-xl border-b border-cyan-800/40 sticky top-0 z-50 backdrop-blur-md bg-opacity-95">
+      <header className="bg-card-bg text-text-main shadow border-b border-border-primary sticky top-0 z-50 backdrop-blur-md bg-opacity-95 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-6 py-4 flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-400 to-amber-300 flex items-center justify-center shadow-lg shadow-cyan-400/20">
-              <AudioLines className="w-6 h-6 text-slate-950 animate-pulse" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-amber-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+              <AudioLines className="w-6 h-6 text-slate-950 dark:text-white animate-pulse" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight">{t.appTitle}</span>
-                <span className="bg-cyan-500/10 text-cyan-400 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-cyan-500/20">
+                <span className="font-bold text-lg tracking-tight text-text-main">{t.appTitle}</span>
+                <span className="bg-brand-accent/10 text-brand-accent text-[10px] font-semibold px-2 py-0.5 rounded-full border border-brand-accent/20">
                   EN/VI
                 </span>
               </div>
-              <p className="text-xs text-slate-350">{t.appSubtitle}</p>
+              <p className="text-xs text-text-muted">{t.appSubtitle}</p>
             </div>
           </div>
 

@@ -2257,8 +2257,16 @@ let supabaseClientInstance: any = null;
 function getSupabaseClient() {
   if (supabaseClientInstance) return supabaseClientInstance;
 
-  let url = (process.env.SUPABASE_URL || "https://omcuhthpeenwlzdwzlra.supabase.co").trim();
-  const key = (process.env.SUPABASE_ANON_KEY || "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez").trim();
+  let url = (process.env.SUPABASE_URL || "").trim();
+  const key = (process.env.SUPABASE_ANON_KEY || "").trim();
+
+  const isDefaultUrl = url === "https://omcuhthpeenwlzdwzlra.supabase.co" || url === "";
+  const isDefaultKey = key === "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez" || key === "";
+
+  if (isDefaultUrl || isDefaultKey) {
+    console.log("[Podcast - Supabase] Supabase integration is unconfigured or using non-functional default dummy credentials. Disabling cloud sync.");
+    return null;
+  }
 
   if (url.includes("supabase.com/dashboard/project/")) {
     const parts = url.split("supabase.com/dashboard/project/");
@@ -2269,11 +2277,6 @@ function getSupabaseClient() {
         console.log(`[Podcast - Supabase] Auto-resolved dashboard URL configuration to REST/Storage API gateway: ${url}`);
       }
     }
-  }
-
-  if (!url || !key) {
-    console.log("[Podcast - Supabase] Crucial parameters SUPABASE_URL or SUPABASE_ANON_KEY missing.");
-    return null;
   }
 
   try {

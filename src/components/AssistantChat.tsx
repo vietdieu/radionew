@@ -160,7 +160,7 @@ export default function AssistantChat({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 50, scale: 0.9 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            className="fixed bottom-20 right-4 left-4 sm:left-auto sm:right-6 sm:bottom-24 z-[100] w-auto sm:w-full sm:max-w-sm h-[500px] md:h-[580px] bg-white dark:bg-slate-950 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-fade-in"
+            className="fixed bottom-20 right-4 left-4 sm:left-auto sm:right-6 sm:bottom-24 z-[100] w-auto sm:w-full sm:max-w-sm h-[500px] md:h-[580px] bg-card-bg rounded-3xl shadow-2xl border border-border-primary flex flex-col overflow-hidden animate-fade-in transition-colors duration-200"
             id="assistant-chat-window"
           >
             {/* Header */}
@@ -218,36 +218,36 @@ export default function AssistantChat({
             </div>
 
             {/* Conversation Messages Box */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50 dark:bg-slate-900/30">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-bg-primary transition-colors duration-200">
               {messages.length === 0 ? (
                 /* Welcome Empty Screen */
                 <div className="h-full flex flex-col justify-center items-center text-center p-4 space-y-4 my-auto select-none">
                   <div className="p-4 bg-gradient-to-br from-cyan-500/10 to-indigo-500/10 rounded-full border border-indigo-500/20 shadow-inner">
                     <Sparkles className="w-10 h-10 text-cyan-600 dark:text-cyan-400 animate-pulse" />
                   </div>
-                  <h4 className="text-base font-extrabold text-slate-800 dark:text-slate-100">{t.emptyTitle}</h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-[280px]">
+                  <h4 className="text-base font-extrabold text-text-main">{t.emptyTitle}</h4>
+                  <p className="text-xs text-text-muted leading-relaxed max-w-[280px]">
                     {t.emptyDesc}
                   </p>
 
                   {/* Suggestion Commands */}
-                  <div className="w-full text-left space-y-2 pt-2 border-t border-slate-100 dark:border-slate-850">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  <div className="w-full text-left space-y-2 pt-2 border-t border-border-primary">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted block">
                       {t.suggestionTitle}
                     </span>
                     <div className="grid grid-cols-1 gap-1.5">
                       <button
                         onClick={() => sendMessage(t.suggestRecommend)}
-                        className="text-left text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-cyan-500 dark:hover:border-cyan-500 hover:bg-cyan-50/30 dark:hover:bg-cyan-950/20 p-2.5 rounded-xl text-slate-700 dark:text-slate-300 font-medium transition cursor-pointer flex items-center gap-1.5"
+                        className="text-left text-xs bg-card-bg border border-border-primary hover:border-brand-accent hover:bg-brand-accent/5 p-2.5 rounded-xl text-text-main font-medium transition cursor-pointer flex items-center gap-1.5"
                       >
-                        <Plus className="w-3.5 h-3.5 text-cyan-500" />
+                        <Plus className="w-3.5 h-3.5 text-brand-accent" />
                         <span>{t.suggestRecommend}</span>
                       </button>
                       <button
                         onClick={() => sendMessage(t.suggestRss)}
-                        className="text-left text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-cyan-500 dark:hover:border-cyan-500 hover:bg-cyan-50/30 dark:hover:bg-cyan-950/20 p-2.5 rounded-xl text-slate-700 dark:text-slate-300 font-medium transition cursor-pointer flex items-center gap-1.5"
+                        className="text-left text-xs bg-card-bg border border-border-primary hover:border-brand-accent hover:bg-brand-accent/5 p-2.5 rounded-xl text-text-main font-medium transition cursor-pointer flex items-center gap-1.5"
                       >
-                        <Plus className="w-3.5 h-3.5 text-cyan-500" />
+                        <Plus className="w-3.5 h-3.5 text-brand-accent" />
                         <span>{t.suggestRss}</span>
                       </button>
                     </div>
@@ -271,18 +271,18 @@ export default function AssistantChat({
                       {/* Bubble */}
                       <div className="flex flex-col max-w-[80%]">
                         <div
-                          className={`p-3 rounded-2xl text-xs leading-relaxed font-sans whitespace-pre-wrap shadow-xs ${
+                          className={`p-3 rounded-2xl text-xs leading-relaxed font-sans whitespace-pre-wrap shadow-xs transition-colors duration-200 ${
                             msg.role === "user"
                               ? "bg-gradient-to-tr from-cyan-600 to-indigo-600 text-white rounded-tr-none shadow-md"
-                              : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none shadow-sm"
+                              : "bg-card-bg border border-border-primary text-text-main rounded-tl-none shadow-sm"
                           }`}
                         >
                           {msg.content}
 
                           {/* Suggested Topics Rendering as Action Buttons */}
                           {msg.role === "assistant" && msg.suggestedTopics && msg.suggestedTopics.length > 0 && (
-                            <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
-                              <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 block tracking-tight uppercase">
+                            <div className="mt-3.5 pt-3 border-t border-border-primary space-y-2">
+                              <span className="text-[10px] font-bold text-brand-accent block tracking-tight uppercase">
                                 {t.suggestedTopicsTitle}
                               </span>
                               <div className="grid grid-cols-1 gap-1.5">
@@ -293,13 +293,13 @@ export default function AssistantChat({
                                       setIsOpen(false);
                                       handleCreateNews(item.topic);
                                     }}
-                                    className="text-left w-full bg-slate-50 dark:bg-slate-950 hover:bg-cyan-50/20 dark:hover:bg-cyan-950/20 border border-slate-200 dark:border-slate-850 hover:border-cyan-400 dark:hover:border-cyan-700 p-2.5 rounded-xl text-slate-700 dark:text-slate-300 transition-all cursor-pointer flex flex-col gap-0.5 hover:scale-[1.02]"
+                                    className="text-left w-full bg-bg-primary hover:bg-brand-accent/10 border border-border-primary hover:border-brand-accent p-2.5 rounded-xl text-text-main transition-all cursor-pointer flex flex-col gap-0.5 hover:scale-[1.02]"
                                   >
-                                    <span className="font-bold text-[11px] text-cyan-600 dark:text-cyan-400 flex items-center gap-1">
+                                    <span className="font-bold text-[11px] text-brand-accent flex items-center gap-1">
                                       <Sparkles className="w-3.5 h-3.5 animate-pulse" />
                                       {uiLanguage === "vi" ? `Phát tin: ${item.topic}` : `Broadcast: ${item.topic}`}
                                     </span>
-                                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
+                                    <span className="text-[10px] text-text-muted font-medium leading-relaxed">
                                       {item.reason}
                                     </span>
                                   </button>
@@ -310,8 +310,8 @@ export default function AssistantChat({
 
                           {/* Sources Grounding Info */}
                           {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
-                            <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block mb-1">
+                            <div className="mt-2.5 pt-2 border-t border-border-primary">
+                              <span className="text-[10px] font-bold text-text-muted block mb-1">
                                 🌐 {t.sourcesTitle}
                               </span>
                               <div className="flex flex-col gap-1.5">
@@ -349,11 +349,11 @@ export default function AssistantChat({
 
                   {/* Processing / Generating bubble */}
                   {isProcessing && (
-                    <div className="flex gap-2.5 justify-start">
+                    <div className="flex gap-2.5 justify-start animate-pulse">
                       <div className="w-7 h-7 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800 text-cyan-400 shrink-0">
                         <Bot className="w-4 h-4 animate-spin-slow" />
                       </div>
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-2xl rounded-tl-none max-w-[80%] flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="bg-card-bg border border-border-primary p-3 rounded-2xl rounded-tl-none max-w-[80%] flex items-center gap-2 text-xs text-text-muted">
                         <Sparkles className="w-3.5 h-3.5 text-cyan-500 animate-spin" />
                         <span>{t.processing}</span>
                       </div>
@@ -363,7 +363,7 @@ export default function AssistantChat({
                   {/* Listening bubble */}
                   {isListening && (
                     <div className="flex gap-2.5 justify-end">
-                      <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 p-3 rounded-2xl rounded-tr-none max-w-[80%] flex items-center gap-2 text-xs text-rose-600 dark:text-rose-400 animate-pulse">
+                      <div className="bg-rose-500/10 border border-rose-500/20 p-3 rounded-2xl rounded-tr-none max-w-[80%] flex items-center gap-2 text-xs text-rose-500 animate-pulse">
                         <MicOff className="w-3.5 h-3.5" />
                         <span>{t.listening}</span>
                       </div>
@@ -394,7 +394,7 @@ export default function AssistantChat({
             </div>
 
             {/* Input / Control Area */}
-            <div className="p-3 bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 shrink-0 space-y-2">
+            <div className="p-3 bg-card-bg border-t border-border-primary shrink-0 space-y-2 transition-colors duration-200">
               <div className="flex items-center gap-2">
                 {/* Voice Record Microphone Trigger */}
                 <button
@@ -402,7 +402,7 @@ export default function AssistantChat({
                   className={`p-3 rounded-xl transition-all select-none cursor-pointer flex items-center justify-center shrink-0 border ${
                     isListening
                       ? "bg-rose-500 hover:bg-rose-600 border-rose-600 text-white animate-pulse"
-                      : "bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800"
+                      : "bg-bg-primary hover:bg-bg-primary/80 text-text-muted border-border-primary"
                   }`}
                   title={isListening ? "Stop voice listening" : "Start voice search"}
                 >
@@ -416,7 +416,7 @@ export default function AssistantChat({
                   onChange={(e) => setInputVal(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={t.inputPlaceholder}
-                  className="flex-1 px-3 py-2.5 text-xs bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-850 focus:bg-white dark:focus:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 focus:border-cyan-500 dark:focus:border-cyan-500 focus:outline-none transition-all placeholder:text-slate-400 text-slate-800 dark:text-slate-100"
+                  className="flex-1 px-3 py-2.5 text-xs bg-bg-primary hover:bg-bg-primary/80 focus:bg-card-bg rounded-xl border border-border-primary focus:border-brand-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-accent transition-all placeholder:text-text-muted/60 text-text-main"
                   disabled={isProcessing}
                 />
 
@@ -426,7 +426,7 @@ export default function AssistantChat({
                   disabled={isProcessing || inputVal.trim() === ""}
                   className={`p-3 rounded-xl transition-all select-none cursor-pointer flex items-center justify-center shrink-0 ${
                     inputVal.trim() === "" || isProcessing
-                      ? "bg-slate-100 dark:bg-slate-900 text-slate-400 cursor-not-allowed border border-transparent"
+                      ? "bg-bg-primary text-text-muted/40 cursor-not-allowed border border-transparent"
                       : "bg-cyan-600 hover:bg-cyan-700 text-white shadow-sm hover:scale-[1.03]"
                   }`}
                 >

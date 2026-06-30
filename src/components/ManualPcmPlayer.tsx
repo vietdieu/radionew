@@ -154,6 +154,7 @@ export default function ManualPcmPlayer({
   const [frequencyData, setFrequencyData] = useState<number[]>(new Array(32).fill(12));
   const [copied, setCopied] = useState(false);
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
+  const [showRemaining, setShowRemaining] = useState(false);
   
   const startTimeCtxRef = useRef<number>(0);
   const elapsedOffsetRef = useRef<number>(0);
@@ -625,11 +626,36 @@ useEffect(() => {
       }
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === "INPUT" ||
+          activeEl.tagName === "TEXTAREA" ||
+          activeEl.getAttribute("contenteditable") === "true")
+      ) {
+        return;
+      }
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        handlePlayPause();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        handleSkip(-10);
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        handleSkip(10);
+      }
+    };
+
     window.addEventListener("commutecast-toggle-play", handleTogglePlayEvent);
     window.addEventListener("commutecast-seek", handleSeekEvent);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("commutecast-toggle-play", handleTogglePlayEvent);
       window.removeEventListener("commutecast-seek", handleSeekEvent);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isPlaying, currentTime, totalDuration, playbackRate, volume]);
 
@@ -959,11 +985,20 @@ useEffect(() => {
             step={0.1}
             value={currentTime}
             onChange={handleScrubberChange}
-            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+            aria-label={uiLanguage === "vi" ? "Thanh tua thời gian bản tin" : "Podcast time scrubber"}
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
           />
           <div className="flex justify-between items-center mt-2 text-xs text-slate-400 font-mono">
             <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(totalDuration)}</span>
+            <span 
+              onClick={() => setShowRemaining(!showRemaining)} 
+              className="cursor-pointer hover:text-white transition select-none flex items-center gap-1"
+              title={uiLanguage === "vi" ? "Bấm để đổi chế độ hiển thị thời gian" : "Click to toggle remaining time"}
+              role="button"
+              aria-label={uiLanguage === "vi" ? "Chuyển đổi hiển thị thời gian còn lại" : "Toggle remaining time display"}
+            >
+              {showRemaining ? `-${formatTime(totalDuration - currentTime)}` : formatTime(totalDuration)}
+            </span>
           </div>
         </div>
 
@@ -973,25 +1008,30 @@ useEffect(() => {
           {/* Rate speed selector */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-slate-500 font-mono uppercase mr-1">{pt.speed}</span>
-            <div className="bg-slate-800/80 p-0.5 rounded-lg flex border border-slate-700/40">
-              {[0.75, 1.0, 1.25, 1.5, 2.0].map((rate) => (
-                <button
-                  key={rate}
-                  onClick={() => handleRateChange(rate)}
-                  className={`px-1.5 py-1 text-[10px] font-mono rounded font-bold transition-all relative group ${
-                    playbackRate === rate 
-                      ? "bg-gradient-to-r from-cyan-500 to-cyan-600 text-slate-900" 
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                  title={rate === 0.75 && uiLanguage === "vi" ? "Tốc độ chậm - giọng hơi trầm" : 
-                         rate === 2.0 && uiLanguage === "vi" ? "Tốc độ nhanh - giọng hơi cao" : ""}
-                >
-                  {rate}x
-                  {rate === 0.75 && (
-                    <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
-                  )}
-                </button>
-              ))}
+            <div className="bg-slate-800/80 p-0.5 rounded-lg flex border border-slate-700/40" role="group" aria-label={uiLanguage === "vi" ? "Chọn tốc độ phát" : "Select playback speed"}>
+              {[0.75, 1.0, 1.25, 1.5, 2.0].map((rate) => {
+                const isSelected = playbackRate === rate;
+                return (
+                  <button
+                    key={rate}
+                    onClick={() => handleRateChange(rate)}
+                    aria-pressed={isSelected}
+                    aria-label={uiLanguage === "vi" ? `Tốc độ phát ${rate}x` : `Playback speed ${rate}x`}
+                    className={`px-1.5 py-1 text-[10px] font-mono rounded font-bold transition-all relative group cursor-pointer ${
+                      isSelected 
+                        ? "bg-gradient-to-r from-cyan-500 to-cyan-600 text-slate-900" 
+                        : "text-slate-400 hover:text-white hover:bg-slate-700/30"
+                    }`}
+                    title={rate === 0.75 && uiLanguage === "vi" ? "Tốc độ chậm - giọng hơi trầm" : 
+                           rate === 2.0 && uiLanguage === "vi" ? "Tốc độ nhanh - giọng hơi cao" : ""}
+                  >
+                    {rate}x
+                    {rate === 0.75 && (
+                      <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1000,7 +1040,8 @@ useEffect(() => {
             <button
               onClick={() => handleSkip(-10)}
               title={uiLanguage === "vi" ? "Tua lại 10 giây" : "Rewind 10 seconds"}
-              className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/60 hover:bg-slate-800 transition border border-slate-700/20"
+              aria-label={uiLanguage === "vi" ? "Tua lại 10 giây" : "Rewind 10 seconds"}
+              className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/60 hover:bg-slate-800 transition border border-slate-700/20 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -1008,6 +1049,7 @@ useEffect(() => {
             <motion.button
               onClick={() => handlePlayPause()}
               disabled={audioChunks.length === 0}
+              aria-label={isPlaying ? (uiLanguage === "vi" ? "Tạm dừng" : "Pause") : (uiLanguage === "vi" ? "Phát bản tin" : "Play briefing")}
               whileHover={{ scale: audioChunks.length === 0 ? 1 : 1.08 }}
               whileTap={{ scale: audioChunks.length === 0 ? 1 : 0.95 }}
               animate={isPlaying ? {
@@ -1040,7 +1082,8 @@ useEffect(() => {
             <button
               onClick={() => handleSkip(10)}
               title={uiLanguage === "vi" ? "Tới 10 giây" : "Forward 10 seconds"}
-              className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/60 hover:bg-slate-800 transition border border-slate-700/20"
+              aria-label={uiLanguage === "vi" ? "Tới 10 giây" : "Forward 10 seconds"}
+              className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/60 hover:bg-slate-800 transition border border-slate-700/20 cursor-pointer"
             >
               <RotateCw className="w-4 h-4" />
             </button>
@@ -1050,6 +1093,7 @@ useEffect(() => {
           <button
             onClick={() => handleDownloadWav()}
             disabled={isPreparingDownload}
+            aria-label={uiLanguage === "vi" ? "Xuất file âm thanh chất lượng cao" : "Export high fidelity audio file"}
             className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-full border border-slate-700 hover:border-slate-600 text-xs text-white font-medium transition cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
             title={uiLanguage === "vi" ? "Tải xuống toàn bộ bản tin thành file WAV" : "Download full summary in high fidelity WAV format"}
           >
