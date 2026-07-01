@@ -20,24 +20,6 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// ===== MOCK BROADCAST ENGINE (tạm thời) =====
-// Nếu file broadcastSpeechEngine.ts bị lỗi, chúng ta sẽ dùng mock này
-let BroadcastSpeechEngine: any = null;
-try {
-  const module = await import("./src/services/broadcastSpeechEngine.js");
-  BroadcastSpeechEngine = module.BroadcastSpeechEngine;
-  console.log("[Server] BroadcastSpeechEngine loaded successfully.");
-} catch (err: any) {
-  console.warn("[Server] Failed to load BroadcastSpeechEngine, using fallback mock:", err.message);
-  // Mock object
-  BroadcastSpeechEngine = {
-    process: async (text: string, voice: string, tone: string, ai?: any) => {
-      console.log("[Mock] BroadcastSpeechEngine.process called");
-      return text;
-    }
-  };
-}
-
 let currentKeyIndex = 0;
 const keyCooldownMap = new Map<string, number>();
 const COOLDOWN_DURATION = 60 * 1000; // 60 giây
@@ -46,6 +28,29 @@ let globalGeminiTtsDisabledUntil = 0;
 let globalEdgeTtsDisabledUntil = 0;
 let globalGCloudTtsDisabledUntil = 0;
 let lastSuccessfulEngine: string | null = null;
+
+// ===== MOCK BROADCAST ENGINE (tạm thời) =====
+let BroadcastSpeechEngine: any = null;
+let broadcastEngineLoaded = false;
+
+async function loadBroadcastSpeechEngine() {
+  try {
+    const module = await import("./src/services/broadcastSpeechEngine.ts");
+    BroadcastSpeechEngine = module.BroadcastSpeechEngine;
+    console.log("[Server] BroadcastSpeechEngine loaded successfully.");
+  } catch (err: any) {
+    console.warn("[Server] Failed to load BroadcastSpeechEngine, using fallback mock:", err.message);
+    BroadcastSpeechEngine = {
+      process: async (text: string, voice: string, tone: string, ai?: any) => {
+        console.log("[Mock] BroadcastSpeechEngine.process called");
+        return text;
+      }
+    };
+  }
+}
+
+// Gọi load trước khi serveApp
+await loadBroadcastSpeechEngine();
 
 // ===== THÊM CƠ CHẾ LƯU TRẠNG THÁI FAIL TRONG REQUEST =====
 const engineFailInRequest = new Set<string>();
@@ -3016,6 +3021,8 @@ app.post("/api/test-tts", async (req, res) => {
 
 // ==================== SERVE FRONTEND ====================
 async function serveApp() {
+  // Load BroadcastSpeechEngine trước khi khởi động
+  await loadBroadcastSpeechEngine();
   const distPath = path.join(process.cwd(), "dist");
   const hasDist = fs.existsSync(distPath);
 
