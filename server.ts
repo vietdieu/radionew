@@ -34,6 +34,7 @@ let BroadcastSpeechEngine: any = null;
 let broadcastEngineLoaded = false;
 
 async function loadBroadcastSpeechEngine() {
+  if (broadcastEngineLoaded) return;
   try {
     const module = await import("./src/services/broadcastSpeechEngine.ts");
     BroadcastSpeechEngine = module.BroadcastSpeechEngine;
@@ -47,6 +48,7 @@ async function loadBroadcastSpeechEngine() {
       }
     };
   }
+  broadcastEngineLoaded = true;
 }
 
 // Gọi load trước khi serveApp
