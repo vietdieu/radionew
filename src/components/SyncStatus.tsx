@@ -102,7 +102,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
           actionBtn: (
             <button
               onClick={triggerSync}
-              className={`ml-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all duration-200 hover:scale-[1.03] active:scale-95 cursor-pointer ${
+              className={`ml-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all duration-200 hover:scale-[1.03] active:scale-95 cursor-pointer hidden sm:inline-block ${
                 queueLength > 0 
                   ? "bg-amber-500 hover:bg-amber-600 text-slate-950" 
                   : "bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
@@ -122,7 +122,7 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
           actionBtn: user ? (
             <button
               onClick={triggerSync}
-              className="ml-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 transition-all duration-200 hover:scale-[1.03] active:scale-95 cursor-pointer"
+              className="ml-2 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 transition-all duration-200 hover:scale-[1.03] active:scale-95 cursor-pointer hidden sm:inline-block"
             >
               {dict.retry}
             </button>
@@ -136,13 +136,13 @@ export function SyncStatus({ uiLanguage = "vi" }: SyncStatusProps) {
 
   return (
     <div 
-      className={`flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-mono font-medium transition-all duration-300 shadow-sm ${status.bg}`}
+      className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium transition-all duration-300 shadow-sm ${status.bg}`}
       id="sync-status-indicator"
       title={status.title}
     >
       <div className="flex items-center gap-1.5">
         {status.icon}
-        <span className="font-sans leading-none">{status.text}</span>
+        <span className="font-sans leading-none hidden sm:inline">{status.text}</span>
       </div>
       {status.actionBtn}
     </div>

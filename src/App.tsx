@@ -1297,24 +1297,26 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
       
       {/* Premium Visual Header Grid Panel */}
       <header className="bg-card-bg text-text-main shadow border-b border-border-primary sticky top-0 z-50 backdrop-blur-md bg-opacity-95 transition-colors duration-200">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex flex-wrap justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-amber-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-              <AudioLines className="w-6 h-6 text-slate-950 dark:text-white animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight text-text-main">{t.appTitle}</span>
-                <span className="bg-brand-accent/10 text-brand-accent text-[10px] font-semibold px-2 py-0.5 rounded-full border border-brand-accent/20">
-                  EN/VI
-                </span>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-amber-500 flex items-center justify-center shadow-lg shadow-cyan-500/20 shrink-0">
+                <AudioLines className="w-6 h-6 text-slate-950 dark:text-white animate-pulse" />
               </div>
-              <p className="text-xs text-text-muted">{t.appSubtitle}</p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-base sm:text-lg tracking-tight text-text-main">{t.appTitle}</span>
+                  <span className="bg-brand-accent/10 text-brand-accent text-[10px] font-semibold px-2 py-0.5 rounded-full border border-brand-accent/20">
+                    EN/VI
+                  </span>
+                </div>
+                <p className="text-[10px] sm:text-xs text-text-muted">{t.appSubtitle}</p>
+              </div>
             </div>
           </div>
 
           {/* Quick status controls */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto">
             {/* Visual Sync Status Feedback Indicator */}
             <SyncStatus uiLanguage={uiLanguage} />
 
@@ -1331,55 +1333,56 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
             {/* Realtime dynamic Language switcher toggle */}
             <button
               onClick={() => setUiLanguage((prev) => (prev === "vi" ? "en" : "vi"))}
-              className="px-3.5 py-1.5 bg-surface-bg hover:bg-bg-secondary border border-border-primary text-text-main hover:text-brand-accent text-xs font-semibold rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+              className="px-2.5 sm:px-3.5 py-1.5 bg-surface-bg hover:bg-bg-secondary border border-border-primary text-text-main hover:text-brand-accent text-xs font-semibold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
               title="Bấm để chuyển đổi ngôn ngữ giao diện / Click to toggle UI language"
             >
               <Languages className="w-4 h-4 text-brand-accent" />
-              <span>{t.switchLangButton}</span>
+              <span className="hidden sm:inline">{t.switchLangButton}</span>
+              <span className="sm:hidden text-[11px] font-mono">{uiLanguage === "vi" ? "EN" : "VI"}</span>
             </button>
 
             {/* Smart PWA Web Notifications Toggle Badge */}
             {typeof window !== "undefined" && "Notification" in window && (
-<button
-  onClick={() => requestNotificationPermission()}
-  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer border shadow-xs ${
-    notificationPermission === "granted"
-      ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40 text-emerald-850 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/40"
-      : notificationPermission === "denied"
-      ? "bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/40 text-rose-850 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/40"
-      : "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/40 text-amber-850 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-100/40 animate-pulse"
-  }`}
-  title={
-    notificationPermission === "granted"
-      ? "Thông báo đang bật"
-      : notificationPermission === "denied"
-      ? "Thông báo đã bị chặn. Bấm để hướng dẫn mở lại."
-      : "Bấm để bật thông báo"
-  }
->
-  {notificationPermission === "granted" ? (
-    <>
-      <BellRing className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-      <span>{t.notificationGranted}</span>
-    </>
-  ) : notificationPermission === "denied" ? (
-    <>
-      <BellOff className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-      <span>{t.notificationBlocked}</span>
-    </>
-  ) : (
-    <>
-      <Bell className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-      <span>{t.notificationBtnEnable}</span>
-    </>
-  )}
-</button>
+              <button
+                onClick={() => requestNotificationPermission()}
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border shadow-xs ${
+                  notificationPermission === "granted"
+                    ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40 text-emerald-850 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/40"
+                    : notificationPermission === "denied"
+                    ? "bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/40 text-rose-850 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/40"
+                    : "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/40 text-amber-850 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-100/40 animate-pulse"
+                }`}
+                title={
+                  notificationPermission === "granted"
+                    ? "Thông báo đang bật"
+                    : notificationPermission === "denied"
+                    ? "Thông báo đã bị chặn. Bấm để hướng dẫn mở lại."
+                    : "Bấm để bật thông báo"
+                }
+              >
+                {notificationPermission === "granted" ? (
+                  <>
+                    <BellRing className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span className="hidden sm:inline">{t.notificationGranted}</span>
+                  </>
+                ) : notificationPermission === "denied" ? (
+                  <>
+                    <BellOff className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                    <span className="hidden sm:inline">{t.notificationBlocked}</span>
+                  </>
+                ) : (
+                  <>
+                    <Bell className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span className="hidden sm:inline">{t.notificationBtnEnable}</span>
+                  </>
+                )}
+              </button>
             )}
 
             {/* Driving Mode Toggle Badge */}
             <button
               onClick={() => toggleDrivingMode()}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer border shadow-xs ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer border shadow-xs ${
                 userPref.isDrivingMode
                   ? "bg-amber-500 hover:bg-amber-600 text-slate-950 border-amber-400/40 font-extrabold"
                   : "bg-surface-bg hover:bg-bg-secondary text-text-main border-border-primary hover:text-amber-500"
@@ -1391,10 +1394,11 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               }
             >
               <span className={`w-1.5 h-1.5 rounded-full ${userPref.isDrivingMode ? "bg-slate-950 animate-ping" : "bg-amber-500 dark:bg-amber-400"}`} />
-              <span>{uiLanguage === "vi" ? "Chế Độ Lái Xe" : "Driving Mode"}</span>
+              <span className="hidden sm:inline">{uiLanguage === "vi" ? "Chế Độ Lái Xe" : "Driving Mode"}</span>
+              <span className="sm:hidden text-[11px] font-mono">{uiLanguage === "vi" ? "Lái xe" : "Drive"}</span>
             </button>
 
-            <span className="bg-surface-bg px-3 py-1.5 rounded-full border border-border-primary text-xs flex items-center gap-1.5">
+            <span className="bg-surface-bg px-2.5 sm:px-3 py-1.5 rounded-full border border-border-primary text-xs hidden md:flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
               <span className="text-text-muted font-mono text-[10px]">{t.statusBadge}</span>
             </span>

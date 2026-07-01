@@ -5,6 +5,148 @@ import dotenv from "dotenv";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import fs from "fs";
+import crypto from 'crypto';
+
+// ===== THÊM CÁC IMPORT CÒN THIẾU =====
+import { GoogleGenAI, Type } from "@google/genai";
+import { TextToSpeechClient } from "@google-cloud/text-to-speech";
+import { Storage } from "@google-cloud/storage";
+import { createClient } from "@supabase/supabase-js";
+import { v4 as uuidv4 } from "uuid";
+import * as xml2js from "xml2js";
+import { tts as runEdgeTTS } from "edge-tts";
+
+// ===== TTS CACHE - CẤU HÌNH AN TOÀN =====
+
+// ============================================================
+// TTS CACHE - FILE SYSTEM (Hoàn chỉnh, an toàn)
+// ============================================================
+
+// Cấu hình cache
+const TTS_CACHE_DIR = path.join(process.cwd(), 'tts_cache');
+const TTS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 phút
+const TTS_CACHE_MAX_FILES = 100;
+const TTS_CACHE_MAX_FILE_SIZE_MB = 5; // Không cache file > 5MB
+let ttsCacheEnabled = false;
+
+// Hàm khởi tạo thư mục cache
+function initTtsCache(): boolean {
+  try {
+    if (!fs.existsSync(TTS_CACHE_DIR)) {
+      fs.mkdirSync(TTS_CACHE_DIR, { recursive: true });
+      console.log(`[TTS Cache] ✅ Created cache directory: ${TTS_CACHE_DIR}`);
+    }
+    // Kiểm tra quyền ghi
+    fs.accessSync(TTS_CACHE_DIR, fs.constants.W_OK);
+    console.log(`[TTS Cache] ✅ Cache directory is writable.`);
+    ttsCacheEnabled = true;
+    return true;
+  } catch (err: any) {
+    console.error(`[TTS Cache] ❌ Cannot write to cache directory: ${err.message}`);
+    ttsCacheEnabled = false;
+    return false;
+  }
+}
+
+// Khởi tạo cache khi server start
+initTtsCache();
+
+// Tạo key cache từ text, voice, tone
+function getTtsCacheKey(text: string, voice: string, tone: string): string {
+  const hash = crypto.createHash('md5').update(`${text}_${voice}_${tone}`).digest('hex');
+  return hash;
+}
+
+// Lấy file từ cache
+function getCachedTtsFile(key: string): Buffer | null {
+  if (!ttsCacheEnabled) return null;
+  
+  const filePath = path.join(TTS_CACHE_DIR, `${key}.mp3`);
+  if (!fs.existsSync(filePath)) return null;
+  
+  try {
+    const stats = fs.statSync(filePath);
+    
+    // Kiểm tra TTL
+    if (Date.now() - stats.mtimeMs > TTS_CACHE_TTL_MS) {
+      fs.unlinkSync(filePath);
+      console.log(`[TTS Cache] 🗑️ Removed expired cache: ${key}`);
+      return null;
+    }
+    
+    // Kiểm tra kích thước file
+    if (stats.size > TTS_CACHE_MAX_FILE_SIZE_MB * 1024 * 1024) {
+      fs.unlinkSync(filePath);
+      console.log(`[TTS Cache] 🗑️ Removed oversized cache: ${key} (${(stats.size/1024/1024).toFixed(2)}MB)`);
+      return null;
+    }
+    
+    console.log(`[TTS Cache] ✅ Cache hit: ${key}`);
+    return fs.readFileSync(filePath);
+  } catch (err) {
+    console.warn(`[TTS Cache] ⚠️ Error reading cache file: ${err}`);
+    return null;
+  }
+}
+
+// Lưu file vào cache
+function setTtsCacheFile(key: string, buffer: Buffer): void {
+  if (!ttsCacheEnabled) return;
+  
+  // Không cache file quá lớn
+  if (buffer.length > TTS_CACHE_MAX_FILE_SIZE_MB * 1024 * 1024) {
+    console.log(`[TTS Cache] ⏭️ File too large (${(buffer.length/1024/1024).toFixed(2)}MB), skipping cache.`);
+    return;
+  }
+  
+  try {
+    // Kiểm tra và dọn dẹp nếu thư mục quá nhiều file
+    const files = fs.readdirSync(TTS_CACHE_DIR);
+    if (files.length >= TTS_CACHE_MAX_FILES) {
+      // Xóa các file cũ nhất (dựa trên mtime)
+      const sorted = files
+        .map(f => ({ 
+          name: f, 
+          mtime: fs.statSync(path.join(TTS_CACHE_DIR, f)).mtimeMs 
+        }))
+        .sort((a, b) => a.mtime - b.mtime);
+      
+      const toDelete = sorted.slice(0, files.length - TTS_CACHE_MAX_FILES + 1);
+      for (const file of toDelete) {
+        try {
+          fs.unlinkSync(path.join(TTS_CACHE_DIR, file.name));
+        } catch (e) {}
+      }
+      console.log(`[TTS Cache] 🧹 Cleaned up ${toDelete.length} old cache files.`);
+    }
+    
+    const filePath = path.join(TTS_CACHE_DIR, `${key}.mp3`);
+    fs.writeFileSync(filePath, buffer);
+    console.log(`[TTS Cache] 💾 Saved to cache: ${key} (${(buffer.length/1024).toFixed(1)}KB)`);
+  } catch (err) {
+    console.warn(`[TTS Cache] ⚠️ Error writing cache file: ${err}`);
+  }
+}
+
+// Xóa toàn bộ cache
+function clearTtsCache(): number {
+  if (!ttsCacheEnabled) return 0;
+  try {
+    const files = fs.readdirSync(TTS_CACHE_DIR);
+    let count = 0;
+    for (const file of files) {
+      try {
+        fs.unlinkSync(path.join(TTS_CACHE_DIR, file));
+        count++;
+      } catch (e) {}
+    }
+    console.log(`[TTS Cache] 🗑️ Cleared ${count} cache files.`);
+    return count;
+  } catch (err) {
+    console.error(`[TTS Cache] ❌ Error clearing cache: ${err}`);
+    return 0;
+  }
+}
 
 dotenv.config();
 
@@ -20,23 +162,66 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// ===== ENDPOINT DEBUG CACHE =====
+app.get("/api/tts/cache-status", (req, res) => {
+  if (!ttsCacheEnabled) {
+    return res.json({ 
+      enabled: false, 
+      message: "Cache is disabled (check directory permissions)." 
+    });
+  }
+  try {
+    const files = fs.readdirSync(TTS_CACHE_DIR);
+    let totalSize = 0;
+    const fileDetails = files.map(f => {
+      const stats = fs.statSync(path.join(TTS_CACHE_DIR, f));
+      totalSize += stats.size;
+      return { 
+        name: f, 
+        sizeKB: (stats.size / 1024).toFixed(1), 
+        ageSeconds: ((Date.now() - stats.mtimeMs) / 1000).toFixed(0),
+        mtime: stats.mtime 
+      };
+    });
+    res.json({
+      enabled: true,
+      fileCount: files.length,
+      totalSizeMB: (totalSize / 1024 / 1024).toFixed(2),
+      maxFiles: TTS_CACHE_MAX_FILES,
+      ttlSeconds: TTS_CACHE_TTL_MS / 1000,
+      maxFileSizeMB: TTS_CACHE_MAX_FILE_SIZE_MB,
+      directory: TTS_CACHE_DIR,
+      files: fileDetails
+    });
+  } catch (err: any) {
+    res.json({ enabled: false, error: err.message });
+  }
+});
+
+app.post("/api/tts/clear-cache", (req, res) => {
+  const count = clearTtsCache();
+  res.json({ success: true, cleared: count });
+});
+
+// ===== GEMINI KEY ROTATION =====
 let currentKeyIndex = 0;
 const keyCooldownMap = new Map<string, number>();
-const COOLDOWN_DURATION = 60 * 1000; // 60 giây
+const COOLDOWN_DURATION = 60 * 1000;
 
+// ===== TTS GLOBAL STATE =====
 let globalGeminiTtsDisabledUntil = 0;
 let globalEdgeTtsDisabledUntil = 0;
 let globalGCloudTtsDisabledUntil = 0;
 let lastSuccessfulEngine: string | null = null;
 
-// ===== MOCK BROADCAST ENGINE (tạm thời) =====
+// ===== BROADCAST SPEECH ENGINE =====
 let BroadcastSpeechEngine: any = null;
 let broadcastEngineLoaded = false;
 
 async function loadBroadcastSpeechEngine() {
   if (broadcastEngineLoaded) return;
   try {
-    const module = await import("./src/services/broadcastSpeechEngine.ts");
+    const module: any = await import("./src/services/broadcastSpeechEngine.ts");
     BroadcastSpeechEngine = module.BroadcastSpeechEngine;
     console.log("[Server] BroadcastSpeechEngine loaded successfully.");
   } catch (err: any) {
@@ -51,8 +236,11 @@ async function loadBroadcastSpeechEngine() {
   broadcastEngineLoaded = true;
 }
 
-// Gọi load trước khi serveApp
-await loadBroadcastSpeechEngine();
+// ===== CACHE VARIABLES =====
+let cachedEpisodesInMem: any[] | null = null;
+let lastCacheSyncTime = 0;
+let cachedRssXml: string | null = null;
+let lastRssXmlTimestamp = 0;
 
 // ===== THÊM CƠ CHẾ LƯU TRẠNG THÁI FAIL TRONG REQUEST =====
 const engineFailInRequest = new Set<string>();
@@ -702,63 +890,74 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // ================== API TTS ==================
-// CẢI TIẾN: Chunking text tối ưu cho tiếng Việt
+// ===== CHUNK TEXT TỐI ƯU =====
+// Thay thế hàm chunkTextForTTS hiện tại
+
 function chunkTextForTTS(text: string, maxChars = 200): string[] {
-  // Split by [BREAK_1S] first
-  const rawSegments = text.split(/\[BREAK_1S\]/i);
-  const finalChunks: string[] = [];
+  if (!text || text.trim().length === 0) return [];
+  
+  // Clean text: loại bỏ khoảng trắng thừa
+  const cleanText = text.replace(/\s+/g, ' ').trim();
+  if (cleanText.length === 0) return [];
+  if (cleanText.length <= maxChars) return [cleanText];
 
-  for (let segment of rawSegments) {
-    segment = segment.trim();
-    if (!segment) continue;
+  // 1. Tách theo câu (dấu . ! ?)
+  const sentenceRegex = /[^.!?]+[.!?]+/g;
+  const matches = cleanText.match(sentenceRegex);
+  const sentences = matches ? matches.map(s => s.trim()).filter(s => s.length > 0) : [cleanText];
+  
+  if (sentences.length === 0) return [cleanText];
 
-    if (segment.length <= maxChars) {
-      finalChunks.push(segment);
-    } else {
-      // Split by sentence boundaries với dấu câu tiếng Việt đầy đủ
-      const sentences = segment.split(/(?<=[.?!;:…])\s+|\n+|(?<=[.?!;:…])\s*/);
-      let currentChunk = "";
+  const chunks: string[] = [];
+  let currentChunk = "";
 
-      for (const sentence of sentences) {
-        const trimmedSentence = sentence.trim();
-        if (!trimmedSentence) continue;
-
-        const candidate = currentChunk ? currentChunk + " " + trimmedSentence : trimmedSentence;
-        if (candidate.length <= maxChars) {
-          currentChunk = candidate;
-        } else {
-          if (currentChunk) {
-            finalChunks.push(currentChunk);
-          }
-          // Xử lý câu dài - cắt tại vị trí an toàn
-          if (trimmedSentence.length > maxChars) {
-            let start = 0;
-            while (start < trimmedSentence.length) {
-              let end = Math.min(start + maxChars, trimmedSentence.length);
-              // Tìm vị trí cắt an toàn (sau dấu cách hoặc dấu câu)
-              const lastSpace = trimmedSentence.lastIndexOf(' ', end);
-              const lastPunct = trimmedSentence.lastIndexOf('.', end);
-              const lastComma = trimmedSentence.lastIndexOf(',', end);
-              const cutPos = Math.max(lastSpace, lastPunct, lastComma);
-              if (cutPos > start) {
-                end = cutPos + 1;
-              }
-              finalChunks.push(trimmedSentence.substring(start, end).trim());
-              start = end;
-            }
-            currentChunk = "";
-          } else {
-            currentChunk = trimmedSentence;
-          }
-        }
-      }
+  for (const sentence of sentences) {
+    // Nếu câu quá dài, cắt an toàn
+    if (sentence.length > maxChars) {
+      // Nếu có chunk hiện tại, đẩy vào kết quả
       if (currentChunk) {
-        finalChunks.push(currentChunk);
+        chunks.push(currentChunk);
+        currentChunk = "";
       }
+      
+      // Cắt câu dài thành nhiều phần
+      let start = 0;
+      while (start < sentence.length) {
+        let end = Math.min(start + maxChars, sentence.length);
+        // Tìm vị trí cắt an toàn
+        const spaceIdx = sentence.lastIndexOf(' ', end);
+        const punctIdx = Math.max(
+          sentence.lastIndexOf('.', end),
+          sentence.lastIndexOf(',', end),
+          sentence.lastIndexOf(';', end),
+          sentence.lastIndexOf(':', end)
+        );
+        const cutIdx = Math.max(spaceIdx, punctIdx);
+        if (cutIdx > start && cutIdx < end) {
+          end = cutIdx + 1;
+        }
+        const part = sentence.substring(start, end).trim();
+        if (part) chunks.push(part);
+        start = end;
+      }
+      continue;
+    }
+
+    // Câu bình thường: ghép vào chunk hiện tại
+    const candidate = currentChunk ? currentChunk + " " + sentence : sentence;
+    if (candidate.length <= maxChars) {
+      currentChunk = candidate;
+    } else {
+      if (currentChunk) chunks.push(currentChunk);
+      currentChunk = sentence;
     }
   }
 
-  return finalChunks.filter(chunk => chunk.length > 0);
+  // Đẩy chunk cuối cùng
+  if (currentChunk) chunks.push(currentChunk);
+
+  // Filter chunks rỗng
+  return chunks.filter(chunk => chunk.trim().length > 0);
 }
 
 // CẢI TIẾN: Voice mapping với voices chất lượng cao nhất
@@ -991,164 +1190,235 @@ function detectLanguage(text: string): "vi" | "en" {
   return "en";
 }
 
-// HÀM TỔNG HỢP CHO TỪNG PHÂN ĐOẠN ĐƠN LẺ: Tự động chọn engine và cấu hình tối ưu dựa trên ngôn ngữ của văn bản thực tế
+// ===== HÀM TỔNG HỢP ÂM THANH TỐI ƯU =====
+
 async function synthesizeSingleChunk(chunk: string, preferredVoice: string, tone: string): Promise<Buffer> {
   const lang = detectLanguage(chunk);
   console.log(`[TTS-CHUNK-DEBUG] Chunk: "${chunk.substring(0, 40)}..." -> Detected language: ${lang}`);
 
-  // 1. Bản đồ hóa giọng nói thông minh (Smart Voice Mapping)
+  // 1. Smart Voice Mapping
   let voiceToUse = preferredVoice;
   if (lang === "vi") {
-    // Nếu văn bản thực tế là Tiếng Việt nhưng giọng được chọn là giọng nước ngoài (en-US, en-UK, v.v.)
     if (!preferredVoice?.startsWith("vi")) {
-      // Bản đồ hóa sang giọng Tiếng Việt phù hợp dựa trên đặc tính giọng đọc
       if (preferredVoice === "Puck" || preferredVoice === "Charon" || preferredVoice === "Fenrir" || preferredVoice === "en-UK") {
-        voiceToUse = "vi-HCM"; // Giọng Nam/Trầm
+        voiceToUse = "vi-HCM";
       } else {
-        voiceToUse = "vi-HN";  // Giọng Nữ Bắc chuẩn
+        voiceToUse = "vi-HN";
       }
-      console.log(`[TTS-CHUNK-DEBUG] Mapping foreign voice "${preferredVoice}" to Vietnamese voice "${voiceToUse}" for Vietnamese text.`);
+      console.log(`[TTS] Mapping "${preferredVoice}" -> "${voiceToUse}" for Vietnamese text.`);
     }
   } else {
-    // Nếu văn bản thực tế là Tiếng Anh nhưng giọng chọn là giọng Việt Nam (vi-HN, vi-HCM)
     if (preferredVoice?.startsWith("vi")) {
       if (preferredVoice === "vi-HCM") {
-        voiceToUse = "en-UK"; // Giọng Anh Anh
+        voiceToUse = "en-UK";
       } else {
-        voiceToUse = "en-US"; // Giọng Anh Mỹ
+        voiceToUse = "en-US";
       }
-      console.log(`[TTS-CHUNK-DEBUG] Mapping Vietnamese voice "${preferredVoice}" to English voice "${voiceToUse}" for English text.`);
+      console.log(`[TTS] Mapping "${preferredVoice}" -> "${voiceToUse}" for English text.`);
     }
   }
 
-  // 2. Chọn Engine tối ưu cho ngôn ngữ đã nhận diện
+  // 2. Chọn engine theo ưu tiên
   const now = Date.now();
-  let activeEngine: "gemini" | "translate" = "translate";
+  
+  // Tiếng Việt: ưu tiên Edge TTS (chất lượng cao nhất)
+  // Tiếng Anh: ưu tiên Gemini TTS (tự nhiên nhất)
+  let enginesToTry: Array<{ name: string; fn: () => Promise<string> }> = [];
 
   if (lang === "vi") {
-    // Tiếng Việt dùng translate cực kỳ nhanh và ổn định
-    activeEngine = "translate";
+    // Ưu tiên Edge cho tiếng Việt
+    enginesToTry = [
+      { 
+        name: "edge", 
+        fn: async () => {
+          const rate = tone === "fast" ? "+20%" : tone === "slow" ? "-20%" : "0%";
+          return await callEdgeTTSForChunk(chunk, voiceToUse, rate);
+        }
+      },
+      { 
+        name: "gemini", 
+        fn: async () => {
+          if (now < globalGeminiTtsDisabledUntil) throw new Error("Gemini disabled");
+          return await callGeminiTTSForChunk(chunk, voiceToUse, tone);
+        }
+      },
+      { 
+        name: "translate", 
+        fn: async () => await callGoogleTranslateTTSForChunk(chunk, voiceToUse)
+      }
+    ];
   } else {
-    // Tiếng Anh dùng Gemini cho chất lượng âm thanh 10/10 phát thanh viên đẳng cấp
-    if (now < globalGeminiTtsDisabledUntil) {
-      activeEngine = "translate"; // Sử dụng translate làm fallback nếu Gemini vượt quota
-    } else {
-      activeEngine = "gemini";
-    }
+    // Tiếng Anh: ưu tiên Gemini
+    enginesToTry = [
+      { 
+        name: "gemini", 
+        fn: async () => {
+          if (now < globalGeminiTtsDisabledUntil) throw new Error("Gemini disabled");
+          return await callGeminiTTSForChunk(chunk, voiceToUse, tone);
+        }
+      },
+      { 
+        name: "edge", 
+        fn: async () => {
+          const rate = tone === "fast" ? "+20%" : tone === "slow" ? "-20%" : "0%";
+          return await callEdgeTTSForChunk(chunk, voiceToUse, rate);
+        }
+      },
+      { 
+        name: "translate", 
+        fn: async () => await callGoogleTranslateTTSForChunk(chunk, voiceToUse)
+      }
+    ];
   }
 
-  console.log(`[TTS-CHUNK-DEBUG] Using engine "${activeEngine}" with voice "${voiceToUse}" for chunk synthesis.`);
-
+  // 3. Thử từng engine
   let base64Audio = "";
   let success = false;
-  const enginesToTry: Array<"gemini" | "translate"> = activeEngine === "gemini" ? ["gemini", "translate"] : ["translate"];
+  let lastError: Error | null = null;
 
   for (const engine of enginesToTry) {
     try {
-      if (engine === "gemini") {
-        base64Audio = await withTimeout(
-          callGeminiTTSForChunk(chunk, voiceToUse, tone),
-          12000 // Tăng timeout lên 12s cho Gemini để đảm bảo kết nối ổn định
-        );
-      } else if (engine === "translate") {
-        base64Audio = await withTimeout(
-          callGoogleTranslateTTSForChunk(chunk, voiceToUse),
-          5000 // Tăng timeout cho translate
-        );
-      }
-
+      console.log(`[TTS] Trying engine "${engine.name}" for chunk...`);
+      base64Audio = await withTimeout(engine.fn(), engine.name === "gemini" ? 12000 : 5000);
       if (base64Audio) {
         success = true;
+        console.log(`[TTS] Engine "${engine.name}" succeeded!`);
         break;
       }
     } catch (err: any) {
-      console.warn(`[TTS-CHUNK-WARNING] Engine "${engine}" failed for chunk: ${err.message || err}`);
-      if (engine === "gemini") {
-        globalGeminiTtsDisabledUntil = Date.now() + 3 * 60 * 1000; // Tạm tắt Gemini trong 3 phút nếu lỗi (quota/mạng)
+      lastError = err;
+      console.warn(`[TTS] Engine "${engine.name}" failed: ${err.message || err}`);
+      if (engine.name === "gemini") {
+        globalGeminiTtsDisabledUntil = Date.now() + 3 * 60 * 1000;
       }
     }
   }
 
+  // 4. Fallback cuối cùng: silent audio (không crash)
   if (!success || !base64Audio) {
-    throw new Error(`Tất cả engine đều thất bại cho đoạn văn bản: "${chunk.substring(0, 30)}..."`);
+    console.warn(`[TTS] All engines failed for chunk. Returning silent audio.`);
+    // Tạo 1 giây silent audio
+    const silentBuffer = Buffer.alloc(48000, 0);
+    return silentBuffer;
   }
 
   return Buffer.from(base64Audio, "base64");
 }
 
-// CẢI TIẾN: TTS endpoint với fallback logic thông minh, timeout tối ưu và log chi tiết
-// ================== ENDPOINT TTS CHÍNH ==================
+// ================== ENDPOINT TTS CHÍNH (CẬP NHẬT) ==================
 app.post("/api/tts", async (req, res): Promise<any> => {
   const { text, voice, tone } = req.body;
   const isVi = voice?.startsWith("vi") || false;
-
-  // Reset fail state trong request
-  engineFailInRequest.clear();
 
   console.log(`[TTS-DEBUG] Text length: ${text?.length || 0}`);
   console.log(`[TTS-DEBUG] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
   console.log(`[TTS-DEBUG] Is Vietnamese: ${isVi}`);
 
   try {
+    // 1. Validate input
     if (!text || text.trim() === "") {
-      return res.status(400).json({ error: "No text provided for audio synthesis." });
-    }
-
-    // ----------------------------------------------------
-    // BROADCAST SPEECH ENGINE (Spoken Adaptation)
-    // ----------------------------------------------------
-    let engineeredText = text;
-    try {
-      engineeredText = await callGeminiWithRotation(async (ai) => {
-        return await BroadcastSpeechEngine.process(text, voice || "en-US", tone || "conversational", ai);
+      return res.status(400).json({ 
+        error: "No text provided for audio synthesis." 
       });
-      console.log(`[TTS-DEBUG] BroadcastSpeechEngine successfully processed the text. New length: ${engineeredText.length}`);
-    } catch (engineErr: any) {
-      console.warn("[TTS-DEBUG] AI-driven BroadcastSpeechEngine failed. Falling back to rules-based offline engine pipeline:", engineErr.message || engineErr);
-      engineeredText = await BroadcastSpeechEngine.process(text, voice || "en-US", tone || "conversational");
     }
 
+
+    // 2. Kiểm tra cache (File System)
+    const voiceToUse = voice || "en-US";
+    const toneToUse = tone || "conversational";
+    const cacheKey = getTtsCacheKey(text, voiceToUse, toneToUse);
+    const cachedAudio = getCachedTtsFile(cacheKey);
+    if (cachedAudio) {
+      console.log(`[TTS] ✅ Cache hit! Returning cached audio.`);
+      return res.json({ 
+        base64Audio: cachedAudio.toString("base64"),
+        engine: "cache",
+        chunksCount: 1,
+        fromCache: true,
+        cacheKey: cacheKey
+      });
+    }
+
+    // 3. Broadcast Speech Engine (Spoken Adaptation)
+    let engineeredText = text;
+    const engineAvailable = BroadcastSpeechEngine && typeof BroadcastSpeechEngine.process === 'function';
+
+    if (engineAvailable) {
+      try {
+        engineeredText = await callGeminiWithRotation(async (ai) => {
+          return await BroadcastSpeechEngine.process(text, voiceToUse, toneToUse, ai);
+        });
+        console.log(`[TTS-DEBUG] BroadcastSpeechEngine (with AI) processed. New length: ${engineeredText.length}`);
+      } catch (aiErr: any) {
+        console.warn("[TTS-DEBUG] BroadcastSpeechEngine with AI failed:", aiErr.message);
+        try {
+          engineeredText = await BroadcastSpeechEngine.process(text, voiceToUse, toneToUse);
+          console.log(`[TTS-DEBUG] BroadcastSpeechEngine (no AI) processed. New length: ${engineeredText.length}`);
+        } catch (noAiErr: any) {
+          console.warn("[TTS-DEBUG] BroadcastSpeechEngine (no AI) also failed:", noAiErr.message);
+        }
+      }
+    } else {
+      console.warn("[TTS-DEBUG] BroadcastSpeechEngine not available. Using raw text.");
+    }
+
+    // 4. Chunk text
     const chunks = chunkTextForTTS(engineeredText, 250);
     console.log(`[TTS-DEBUG] Number of chunks: ${chunks.length}`);
 
-    const finalAudioBuffers: Buffer[] = [];
-
-    // Xử lý song ngữ thông minh cho từng chunk
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      
-      // Nếu chunk có ký tự gạch chéo '/' báo hiệu sự chuyển tiếp song ngữ (Anh - Việt hoặc Việt - Anh)
-      if (chunk.includes("/")) {
-        console.log(`[TTS-DEBUG] Bilingual chunk detected: ${chunk}`);
-        const subChunks = chunk.split("/").map(p => p.trim()).filter(p => p.length > 0);
-        
-        for (let j = 0; j < subChunks.length; j++) {
-          const subChunk = subChunks[j];
-          const buffer = await synthesizeSingleChunk(subChunk, voice || "en-US", tone || "conversational");
-          finalAudioBuffers.push(buffer);
-        }
-      } else {
-        // Chunk đơn ngữ thông thường
-        const buffer = await synthesizeSingleChunk(chunk, voice || "en-US", tone || "conversational");
-        finalAudioBuffers.push(buffer);
-      }
+    if (chunks.length === 0) {
+      return res.status(400).json({ 
+        error: "No valid text chunks to synthesize." 
+      });
     }
 
-    if (finalAudioBuffers.length === 0) {
+    // 5. Synthesize tất cả chunk song song
+    console.log(`[TTS] Synthesizing ${chunks.length} chunks in parallel...`);
+    const startTime = Date.now();
+
+    const chunkPromises = chunks.map(async (chunk) => {
+      // Xử lý song ngữ (chunk có dấu /)
+      if (chunk.includes("/")) {
+        console.log(`[TTS-DEBUG] Bilingual chunk detected: ${chunk.substring(0, 50)}...`);
+        const subChunks = chunk.split("/").map(p => p.trim()).filter(p => p.length > 0);
+        
+        const subPromises = subChunks.map(subChunk => 
+          synthesizeSingleChunk(subChunk, voiceToUse, toneToUse)
+        );
+        const buffers = await Promise.all(subPromises);
+        return Buffer.concat(buffers);
+      } else {
+        // Chunk đơn ngữ
+        return await synthesizeSingleChunk(chunk, voiceToUse, toneToUse);
+      }
+    });
+
+    const audioBuffers = await Promise.all(chunkPromises);
+    const validBuffers = audioBuffers.filter(buf => buf && buf.length > 0);
+
+    if (validBuffers.length === 0) {
       throw new Error("Could not synthesize audio with any available engine.");
     }
 
-    const mergedBuffer = Buffer.concat(finalAudioBuffers);
-    console.log(`[TTS] Successfully synthesized audio. Total size: ${mergedBuffer.length} bytes.`);
+    // 6. Merge audio
+    const mergedBuffer = Buffer.concat(validBuffers);
+    const elapsed = Date.now() - startTime;
+    console.log(`[TTS] Successfully synthesized audio in ${elapsed}ms. Total size: ${mergedBuffer.length} bytes.`);
 
+    // 7. Lưu cache (File System)
+    setTtsCacheFile(cacheKey, mergedBuffer);
+
+    // 8. Return response
     return res.json({ 
       base64Audio: mergedBuffer.toString("base64"),
       engine: "hybrid-smart-tts",
-      chunksCount: chunks.length
+      chunksCount: chunks.length,
+      processedByEngine: engineAvailable,
+      cacheable: true
     });
 
   } catch (error: any) {
-    console.error("TTS Synthesis error:", error);
+    console.error("[TTS] Synthesis error:", error);
     const friendlyError = parseGeminiError(error, isVi, true);
     return res.status(500).json({ error: friendlyError });
   }
@@ -2059,11 +2329,6 @@ interface PublishedEpisode {
   audioUrl: string;
   duration: number;
 }
-
-let cachedEpisodesInMem: PublishedEpisode[] | null = null;
-let lastCacheSyncTime = 0;
-let cachedRssXml: string | null = null;
-let lastRssXmlTimestamp = 0;
 
 async function loadPublishedEpisodesFromSupabaseAsync(): Promise<PublishedEpisode[]> {
   const supabase = getSupabaseClient();
@@ -3031,8 +3296,8 @@ async function serveApp() {
   if (process.env.NODE_ENV !== "production" || !hasDist) {
     console.log("[CommuteCast Backend] Starting Vite in middleware mode...");
     const vite = await createViteServer({
-      server: { middlewareMode: true ,
-       hmr: false   // Tắt HMR để tránh WebSocket
+      server: { middlewareMode: true,
+        hmr: false   // Tắt HMR để tránh WebSocket
       },
       appType: "spa",
     });
@@ -3041,25 +3306,22 @@ async function serveApp() {
     console.log("[CommuteCast Backend] Serving static files from dist...");
     
     // ===== CẤU HÌNH CACHE CHO FILE TĨNH =====
-    // 1. File JS/CSS/Assets: cache lâu dài (1 năm)
     app.use(
       express.static(distPath, {
         maxAge: "1y",
         setHeaders: (res, filePath) => {
-          // Nếu là index.html, không cache
           if (filePath.endsWith("index.html")) {
             res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
             res.setHeader("Pragma", "no-cache");
             res.setHeader("Expires", "0");
           } else {
-            // Các file khác (JS, CSS, ảnh) cache 1 năm
             res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
           }
         },
       })
     );
 
-    // 2. Route fallback: trả về index.html với header no-cache
+    // Route fallback: trả về index.html
     app.get("*", (req, res) => {
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");

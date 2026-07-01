@@ -200,10 +200,11 @@ export default function UserProfile({
       ) : (
         <button
           onClick={() => setIsLoginOpen(true)}
-          className="bg-surface-bg border border-border-primary hover:bg-bg-secondary text-text-main hover:text-brand-accent px-3.5 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-sm active:scale-95"
+          className="bg-surface-bg border border-border-primary hover:bg-bg-secondary text-text-main hover:text-brand-accent px-3 py-1.5 sm:px-3.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 sm:gap-2 cursor-pointer shadow-sm active:scale-95"
+          title={u.signInBtn}
         >
           <Key className="w-3.5 h-3.5 text-brand-accent" />
-          <span>{u.signInBtn}</span>
+          <span className="hidden sm:inline">{u.signInBtn}</span>
         </button>
       )}
 

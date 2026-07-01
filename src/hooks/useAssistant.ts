@@ -402,7 +402,10 @@ export function useAssistant({
         id: Math.random().toString(),
         role: "assistant",
         content: validatedData.speechResponse,
-        suggestedTopics: validatedData.suggestedTopics || [],
+        suggestedTopics: (validatedData.suggestedTopics || []).map(st => ({
+          topic: st.topic || "",
+          reason: st.reason || ""
+        })),
         timestamp: new Date(),
       };
 
