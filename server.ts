@@ -2577,11 +2577,11 @@ function getSupabaseClient() {
   let url = (process.env.SUPABASE_URL || "").trim();
   const key = (process.env.SUPABASE_ANON_KEY || "").trim();
 
-  const isDefaultUrl = url === "https://omcuhthpeenwlzdwzlra.supabase.co" || url === "";
-  const isDefaultKey = key === "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez" || key === "";
+  const isDefaultUrl = url === "https://your-project.supabase.co" || url === "https://example.supabase.co" || url === "";
+  const isDefaultKey = key === "your-anon-key" || key === "";
 
   if (isDefaultUrl || isDefaultKey) {
-    console.log("[Supabase Client] Supabase integration is unconfigured or using non-functional default dummy credentials. Disabling cloud sync.");
+    console.log("[Supabase Client] Supabase integration is unconfigured or using placeholder/example credentials. Disabling cloud sync.");
     supabaseMisconfigured = true;
     supabaseCircuitOpenUntil = Date.now() + CIRCUIT_BREAKER_DURATION;
     return null;
@@ -3182,14 +3182,11 @@ app.get("/api/supabase-config", (req, res) => {
 
   // DANH SÁCH KEY/URL MẶC ĐỊNH CẦN LOẠI BỎ (dummy/example)
   const DEFAULT_SUPABASE_URLS = [
-    "https://omcuhthpeenwlzdwzlra.supabase.co",
     "https://your-project.supabase.co",
     "https://example.supabase.co",
     ""
   ];
   const DEFAULT_ANON_KEYS = [
-    "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tY3VodGhwZWVud2x6ZHd6bHJhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDk0MTk3MTcsImV4cCI6MjAyNDk5NTcxN30.0wjvKqRqC9i9XQx1L5fjlW0qQzD1RqJmYQlY_5Qj8",
     "your-anon-key",
     ""
   ];
@@ -3198,9 +3195,8 @@ app.get("/api/supabase-config", (req, res) => {
   const isDefaultUrl = DEFAULT_SUPABASE_URLS.includes(rawUrl);
   const isDefaultKey = DEFAULT_ANON_KEYS.includes(rawKey);
 
-  // Ngoài ra, kiểm tra nếu URL hoặc Key bắt đầu bằng "sb_" hoặc chứa "placeholder/dummy"
+  // Ngoài ra, kiểm tra nếu URL hoặc Key chứa "placeholder/dummy"
   const isObviouslyFake =
-    rawKey.startsWith("sb_publishable_") ||
     rawUrl.includes("placeholder") ||
     rawUrl.includes("dummy") ||
     rawKey.includes("placeholder") ||
