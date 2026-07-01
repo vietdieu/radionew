@@ -1387,10 +1387,27 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         );
         const buffers = await Promise.all(subPromises);
         return Buffer.concat(buffers);
-      } else {
-        // Chunk đơn ngữ
-        return await synthesizeSingleChunk(chunk, voiceToUse, toneToUse);
       }
+
+      // Xử lý song ngữ ẩn (implicit mixed-language chunk - không có dấu / nhưng chứa cả câu tiếng Anh và tiếng Việt)
+      const sentences = chunk.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 0);
+      if (sentences.length > 1) {
+        const languages = sentences.map(s => detectLanguage(s));
+        const hasEn = languages.includes("en");
+        const hasVi = languages.includes("vi");
+        
+        if (hasEn && hasVi) {
+          console.log(`[TTS-DEBUG] Implicit mixed-language chunk detected: "${chunk.substring(0, 50)}..."`);
+          const subPromises = sentences.map(sentence => 
+            synthesizeSingleChunk(sentence, voiceToUse, toneToUse)
+          );
+          const buffers = await Promise.all(subPromises);
+          return Buffer.concat(buffers);
+        }
+      }
+
+      // Chunk đơn ngữ
+      return await synthesizeSingleChunk(chunk, voiceToUse, toneToUse);
     });
 
     const audioBuffers = await Promise.all(chunkPromises);

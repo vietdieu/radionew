@@ -685,6 +685,19 @@ const requestNotificationPermission = async () => {
     const unsubscribe = setupBackgroundRSSCheck(getApiUrl, (articles) => {
       setRssNotificationArticles(articles);
       setShowRssNotification(true);
+
+      // Automatically add to Smart Play Queue so user can play it later
+      if (articles && articles.length > 0) {
+        addToQueue({
+          id: "automated-rss-daily-briefing",
+          title: uiLanguage === "vi" ? "⚡ Bản tin RSS tự động mới" : "⚡ New Automated RSS Briefing",
+          subtitle: uiLanguage === "vi" 
+            ? `Phát hiện ${articles.length} bài viết mới từ nguồn RSS` 
+            : `Detected ${articles.length} new articles from RSS`,
+          type: "rss",
+          payload: articles
+        });
+      }
       
       // Also show browser native notification if permission is granted
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
@@ -1179,8 +1192,17 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
   }
 };
 
-  const handleApplyHistoryBriefing = async (item: SavedSummary) => {
+  const handleApplyHistoryBriefing = async (item: SavedSummary | any) => {
     try {
+      if (item.id === "automated-rss-daily-briefing") {
+        setIsRssBasedGeneration(true);
+        const articlesToUse = item.payload || rssNotificationArticles;
+        const rawContent = formatArticlesForPrompt(articlesToUse, uiLanguage);
+        handleGenerateBriefing(rawContent);
+        removeFromQueue("automated-rss-daily-briefing");
+        return;
+      }
+
       let fullItem = await getEpisodeFromOffline(item.id);
       if (!fullItem) {
         fullItem = await getFullBriefing(item.id);
@@ -1437,6 +1459,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   const rawContent = formatArticlesForPrompt(rssNotificationArticles, uiLanguage);
                   handleGenerateBriefing(rawContent);
                   setShowRssNotification(false);
+                  removeFromQueue("automated-rss-daily-briefing");
                 }}
                 className="px-4 py-2 bg-white hover:bg-cyan-50 text-slate-950 font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5"
               >

@@ -490,9 +490,10 @@ export class RuleEngine {
       if (typeof rule.replacement === 'string') {
         result = result.replace(rule.pattern, rule.replacement);
       } else {
+        const replacer = rule.replacement;
         result = result.replace(rule.pattern, (match, ...args) => {
-          const execArray = [match, ...args] as RegExpExecArray;
-          return rule.replacement(execArray);
+          const execArray = [match, ...args] as any as RegExpExecArray;
+          return replacer(execArray);
         });
       }
     }
@@ -634,14 +635,13 @@ Use ${config.style} style, ${config.languageMode} mode.
     try {
       const response = await this.ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        systemInstruction: systemPrompt,
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         config: {
+          systemInstruction: systemPrompt,
           temperature: 0.3,
           responseMimeType: 'application/json',
           maxOutputTokens: 2048,
         },
-        abortSignal: controller.signal,
       });
       clearTimeout(timeoutId);
       const raw = response.text?.trim() || '{}';
@@ -652,15 +652,15 @@ Use ${config.style} style, ${config.languageMode} mode.
       return {
         rewritten: data.rewritten || text,
         summary: data.summary || text,
-        emotion: data.emotion || { primary: 'neutral', secondary: [], energy: 0.5, urgency: 0.3, sentiment: 0, confidence: 0.5 },
-        topic: data.topic || 'general',
+        emotion: data.emotion || { primary: EmotionState.NEUTRAL, secondary: [], energy: 0.5, urgency: 0.3, sentiment: 0, confidence: 0.5 },
+        topic: data.topic || Topic.GENERAL,
       };
     } catch (e) {
       return {
         rewritten: text,
         summary: text,
-        emotion: { primary: 'neutral', secondary: [], energy: 0.5, urgency: 0.3, sentiment: 0, confidence: 0.5 },
-        topic: 'general',
+        emotion: { primary: EmotionState.NEUTRAL, secondary: [], energy: 0.5, urgency: 0.3, sentiment: 0, confidence: 0.5 },
+        topic: Topic.GENERAL,
       };
     } finally {
       clearTimeout(timeoutId);
@@ -1406,8 +1406,8 @@ export class CommuteCastEngine {
       ssml: ctx.ssml!,
       audio: ctx.audio!,
       duration: ctx.audio?.duration || 0,
-      emotion: ctx.aiResult?.emotion || { primary: 'neutral', secondary: [], energy: 0.5, urgency: 0.3, sentiment: 0, confidence: 0.5 },
-      topic: ctx.aiResult?.topic || 'general',
+      emotion: ctx.aiResult?.emotion || { primary: EmotionState.NEUTRAL, secondary: [], energy: 0.5, urgency: 0.3, sentiment: 0, confidence: 0.5 },
+      topic: ctx.aiResult?.topic || Topic.GENERAL,
       score: ctx.score!,
     };
 
