@@ -1510,7 +1510,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
 
             <div className="relative group/textarea">
               <textarea
-                className="w-full min-h-[14rem] h-64 p-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-600 outline-none transition resize-y placeholder:text-slate-400 custom-scrollbar block"
+                className="w-full min-h-[14rem] h-64 p-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-600 outline-none transition resize-y placeholder:text-slate-400 custom-scrollbar block text-slate-900 font-normal"
                 placeholder={t.placeholderText}
                 value={newsContent}
                 onChange={(e) => setNewsContent(e.target.value)}
@@ -1856,7 +1856,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 <select
                   value={preferences.commuteType}
                   onChange={(e) => updatePreferences({ commuteType: e.target.value as any })}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none text-slate-900"
                 >
                   <option value="driving">{t.commuteDriving}</option>
                   <option value="transit">{t.commuteTransit}</option>
@@ -1876,7 +1876,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 <select
                   value={preferences.tone}
                   onChange={(e) => updatePreferences({ tone: e.target.value as any })}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none text-slate-900"
                 >
                   <option value="conversational">{t.toneConversational}</option>
                   <option value="informative">{t.toneInformative}</option>
@@ -1897,7 +1897,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                     const nextVoice = e.target.value as any;
                     updatePreferences({ voice: nextVoice });
                   }}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none font-medium cursor-pointer"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none font-medium cursor-pointer text-slate-900"
                 >
                   <option value="vi-HN">🇻🇳 {uiLanguage === "vi" ? "Việt Nam (Giọng Hà Nội - Nữ)" : "Vietnam (Hanoi Accent - Female)"}</option>
                   <option value="vi-HCM">🇻🇳 {uiLanguage === "vi" ? "Việt Nam (Giọng TP. HCM - Nữ/Nam)" : "Vietnam (HCM Accent - Friendly)"}</option>
@@ -1951,7 +1951,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   type="text"
                   value={preferences.locationName || ""}
                   onChange={(e) => updatePreferences({ locationName: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900"
                   placeholder={(t as any).placeholderLocationName}
                 />
               </div>
@@ -1965,7 +1965,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   type="text"
                   value={preferences.commuteRoute || ""}
                   onChange={(e) => updatePreferences({ commuteRoute: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900"
                   placeholder={(t as any).placeholderCommuteRoute}
                 />
               </div>
@@ -1979,7 +1979,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   type="text"
                   value={preferences.focus}
                   onChange={(e) => updatePreferences({ focus: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900"
                   placeholder={t.placeholderFocus}
                 />
               </div>
@@ -1993,7 +1993,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   type="text"
                   value={preferences.customInstructions}
                   onChange={(e) => updatePreferences({ customInstructions: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
+                  className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900"
                   placeholder={t.placeholderSpecial}
                 />
               </div>
