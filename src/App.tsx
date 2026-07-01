@@ -334,17 +334,7 @@ export default function App() {
   const [showVoiceAddPrompt, setShowVoiceAddPrompt] = useState<boolean>(false);
   const [voiceError, setVoiceError] = useState<string>("");
   const [isProcessingVoiceQuery, setIsProcessingVoiceQuery] = useState<boolean>(false);
-  const [preferences, setPreferences] = useState<SummaryPreferences>({
-    targetDuration: "medium",
-    tone: "conversational",
-    voice: "vi-HN",
-    focus: uiLanguage === "vi" ? "tổng quan các sự kiện chính" : "general overview of major events",
-    commuteType: "driving",
-    customInstructions: "",
-    language: "bilingual", // Default to Bilingual as requested by Vietnamese users
-    locationName: uiLanguage === "vi" ? "Hà Nội" : "Hanoi",
-    commuteRoute: ""
-  });
+
 
   // Flow States
   const [step, setStep] = useState<"idle" | "summarizing" | "synthesizing" | "ready" | "error">("idle");
@@ -621,7 +611,8 @@ const requestNotificationPermission = async () => {
   }
 };
 
-  const { preferences: userPref, updateVoice, updateLanguage, updateSpeed, updateDrivingMode } = useUserPreferences();
+  const { preferences, updatePreferences, updateVoice, updateLanguage, updateSpeed, updateDrivingMode } = useUserPreferences();
+  const userPref = preferences;
   const { toggleDrivingMode, toast: drivingToast, clearToast: clearDrivingToast } = useDrivingMode(uiLanguage);
 
   // Setup keyboard shortcuts
@@ -724,7 +715,7 @@ const requestNotificationPermission = async () => {
               setActivePayload(fullItem.payload);
               setActiveAudioChunks(fullItem.audioChunks || []);
               setActiveTitle(fullItem.payload.title);
-              setPreferences(fullItem.preferences);
+              updatePreferences(fullItem.preferences);
               setSelectedBriefId(fullItem.id);
               setStep("ready");
               
@@ -754,17 +745,6 @@ const requestNotificationPermission = async () => {
       window.removeEventListener("hashchange", handleHashChange);
     };
   }, [getFullBriefing, uiLanguage]);
-
-  // Sync preferences state with user global preferences
-  useEffect(() => {
-    if (userPref) {
-      setPreferences((prev) => ({
-        ...prev,
-        voice: userPref.voice,
-        language: userPref.language
-      }));
-    }
-  }, [userPref]);
 
 const handleApplyPreset = (index: number) => {
   // Ép kiểu an toàn, đảm bảo index luôn là số
@@ -1209,7 +1189,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         setActivePayload(fullItem.payload);
         setActiveAudioChunks(fullItem.audioChunks || []);
         setActiveTitle(fullItem.payload.title);
-        setPreferences(fullItem.preferences);
+        updatePreferences(fullItem.preferences);
         setSelectedBriefId(fullItem.id);
         setStep("ready");
 
@@ -1259,7 +1239,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
           setActivePayload(fullItem.payload);
           setActiveAudioChunks(fullItem.audioChunks || []);
           setActiveTitle(fullItem.payload.title);
-          setPreferences(fullItem.preferences);
+          updatePreferences(fullItem.preferences);
           setSelectedBriefId(fullItem.id);
           setStep("ready");
           
@@ -1751,7 +1731,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               {/* Broadcast output language selector - CRITICAL FOR BILINGUAL ASSIGNMENT */}
               <div className="md:col-span-2 bg-gradient-to-r from-cyan-50 to-amber-50 p-4 border border-cyan-150 rounded-xl relative overflow-hidden">
                 <div className="absolute top-2 right-2 opacity-10">
-                  <Languages className="w-16 h-16 text-cyan-900" />
+                   <Languages className="w-16 h-16 text-cyan-900" />
                 </div>
                 <label className="text-xs font-bold text-cyan-950 uppercase tracking-widest block mb-2">
                   {t.labelLanguage}
@@ -1760,11 +1740,10 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   <button
                     type="button"
                     onClick={() => {
-                      setPreferences({ ...preferences, language: "bilingual" });
-                      updateLanguage("bilingual");
+                      updatePreferences({ languageMode: "BILINGUAL" });
                     }}
                     className={`py-3 px-3.5 text-xs font-bold rounded-lg border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
-                      preferences.language === "bilingual"
+                      preferences.languageMode === "BILINGUAL"
                         ? "bg-amber-300 text-black border-amber-400 shadow-md transform scale-[1.01]"
                         : "bg-white text-slate-700 border-slate-200 hover:border-slate-300"
                     }`}
@@ -1776,11 +1755,10 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   <button
                     type="button"
                     onClick={() => {
-                      setPreferences({ ...preferences, language: "vi" });
-                      updateLanguage("vi");
+                      updatePreferences({ languageMode: "VN_ONLY" });
                     }}
                     className={`py-3 px-3.5 text-xs font-bold rounded-lg border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
-                      preferences.language === "vi"
+                      preferences.languageMode === "VN_ONLY"
                         ? "bg-cyan-200 text-black border-cyan-300 shadow-md transform scale-[1.01]"
                         : "bg-white text-slate-700 border-slate-200 hover:border-slate-300"
                     }`}
@@ -1792,11 +1770,10 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   <button
                     type="button"
                     onClick={() => {
-                      setPreferences({ ...preferences, language: "en" });
-                      updateLanguage("en");
+                      updatePreferences({ languageMode: "EN_ONLY" });
                     }}
                     className={`py-3 px-3.5 text-xs font-bold rounded-lg border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
-                      preferences.language === "en"
+                      preferences.languageMode === "EN_ONLY"
                         ? "bg-cyan-600 text-white border-cyan-600 shadow-md shadow-cyan-600/25 transform scale-[1.01]"
                         : "bg-cyan-50/60 text-cyan-900 border-cyan-200 hover:bg-cyan-200 hover:text-cyan-950 hover:border-cyan-300"
                     }`}
@@ -1806,9 +1783,9 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-600 mt-2.5 font-medium leading-relaxed">
-                  {preferences.language === "bilingual" && t.langDescBilingual}
-                  {preferences.language === "vi" && t.langDescVi}
-                  {preferences.language === "en" && t.langDescEn}
+                  {preferences.languageMode === "BILINGUAL" && t.langDescBilingual}
+                  {preferences.languageMode === "VN_ONLY" && t.langDescVi}
+                  {preferences.languageMode === "EN_ONLY" && t.langDescEn}
                 </p>
               </div>
 
@@ -1826,7 +1803,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                     <button
                       key={dur.key}
                       type="button"
-                      onClick={() => setPreferences({ ...preferences, targetDuration: dur.key as any })}
+                      onClick={() => updatePreferences({ targetDuration: dur.key as any })}
                       className={`py-1.5 text-xs font-semibold rounded-lg transition-all ${
                         preferences.targetDuration === dur.key 
                           ? "bg-white text-slate-900 shadow-sm" 
@@ -1851,7 +1828,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 </label>
                 <select
                   value={preferences.commuteType}
-                  onChange={(e) => setPreferences({ ...preferences, commuteType: e.target.value as any })}
+                  onChange={(e) => updatePreferences({ commuteType: e.target.value as any })}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none"
                 >
                   <option value="driving">{t.commuteDriving}</option>
@@ -1871,7 +1848,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 </label>
                 <select
                   value={preferences.tone}
-                  onChange={(e) => setPreferences({ ...preferences, tone: e.target.value as any })}
+                  onChange={(e) => updatePreferences({ tone: e.target.value as any })}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none"
                 >
                   <option value="conversational">{t.toneConversational}</option>
@@ -1891,8 +1868,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                   value={preferences.voice}
                   onChange={(e) => {
                     const nextVoice = e.target.value as any;
-                    setPreferences({ ...preferences, voice: nextVoice });
-                    updateVoice(nextVoice);
+                    updatePreferences({ voice: nextVoice });
                   }}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none font-medium cursor-pointer"
                 >
@@ -1947,7 +1923,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 <input
                   type="text"
                   value={preferences.locationName || ""}
-                  onChange={(e) => setPreferences({ ...preferences, locationName: e.target.value })}
+                  onChange={(e) => updatePreferences({ locationName: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
                   placeholder={(t as any).placeholderLocationName}
                 />
@@ -1961,7 +1937,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 <input
                   type="text"
                   value={preferences.commuteRoute || ""}
-                  onChange={(e) => setPreferences({ ...preferences, commuteRoute: e.target.value })}
+                  onChange={(e) => updatePreferences({ commuteRoute: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
                   placeholder={(t as any).placeholderCommuteRoute}
                 />
@@ -1975,7 +1951,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 <input
                   type="text"
                   value={preferences.focus}
-                  onChange={(e) => setPreferences({ ...preferences, focus: e.target.value })}
+                  onChange={(e) => updatePreferences({ focus: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
                   placeholder={t.placeholderFocus}
                 />
@@ -1989,7 +1965,7 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 <input
                   type="text"
                   value={preferences.customInstructions}
-                  onChange={(e) => setPreferences({ ...preferences, customInstructions: e.target.value })}
+                  onChange={(e) => updatePreferences({ customInstructions: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400"
                   placeholder={t.placeholderSpecial}
                 />

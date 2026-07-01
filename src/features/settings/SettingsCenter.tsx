@@ -37,12 +37,34 @@ interface SettingsCenterProps {
 }
 
 export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsCenterProps) {
-  const { preferences, updateVoice, updateLanguage, updateSpeed } = useUserPreferences();
+  const { preferences, updatePreferences } = useUserPreferences();
   
   // Feature states loaded from centralized feature store
   const [featureSettings, setFeatureSettings] = useState<FeatureSettings>(getFeatureSettings());
   const { theme, setTheme } = useTheme();
   const [clearedMemorySuccess, setClearedMemorySuccess] = useState(false);
+
+  // Synchronize featureSettings with the unified preferences state
+  useEffect(() => {
+    const currentProfile = featureSettings.voiceProfile;
+    if (
+      currentProfile.vietnameseVoice !== preferences.voiceVN ||
+      currentProfile.englishVoice !== preferences.voiceEN ||
+      currentProfile.speed !== preferences.rate ||
+      currentProfile.pitch !== preferences.pitch
+    ) {
+      const updatedProfile = {
+        ...currentProfile,
+        vietnameseVoice: preferences.voiceVN,
+        englishVoice: preferences.voiceEN,
+        speed: preferences.rate,
+        pitch: preferences.pitch
+      };
+      const updatedSettings = { ...featureSettings, voiceProfile: updatedProfile };
+      setFeatureSettings(updatedSettings);
+      saveFeatureSettings(updatedSettings);
+    }
+  }, [preferences.voiceVN, preferences.voiceEN, preferences.rate, preferences.pitch]);
 
   const updateVoiceProfileValue = <K extends keyof VoiceProfile>(key: K, value: VoiceProfile[K]) => {
     const updatedProfile = { ...featureSettings.voiceProfile, [key]: value };
@@ -52,13 +74,14 @@ export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsC
     saveFeatureSettings(updatedSettings);
 
     // Sync with existing React state provider
-    if (key === "vietnameseVoice" || key === "englishVoice") {
-      const newVoice = (key === "vietnameseVoice" ? value : value) as PreferedVoice;
-      updateVoice(newVoice);
-    }
-    if (key === "speed") {
-      // Find nearest read speed limit in UserPreferencesProvider list
-      updateSpeed(value as ReadSpeed);
+    if (key === "vietnameseVoice") {
+      updatePreferences({ voiceVN: value as string });
+    } else if (key === "englishVoice") {
+      updatePreferences({ voiceEN: value as string });
+    } else if (key === "speed") {
+      updatePreferences({ rate: value as number });
+    } else if (key === "pitch") {
+      updatePreferences({ pitch: value as number });
     }
   };
 
@@ -223,14 +246,14 @@ export function SettingsCenter({ uiLanguage = "vi", onClearAllCache }: SettingsC
                 {uiLanguage === "vi" ? "Ngôn ngữ bản tin" : "Bilingual Preference"}
               </span>
               <select
-                value={preferences.language}
-                onChange={(e) => updateLanguage(e.target.value as DefaultLanguage)}
-                className="bg-transparent border-0 text-xs text-right font-bold focus:ring-0 text-cyan-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded"
+                value={preferences.languageMode}
+                onChange={(e) => updatePreferences({ languageMode: e.target.value as any })}
+                className="bg-transparent border-0 text-xs text-right font-bold focus:ring-0 text-cyan-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded cursor-pointer"
                 style={{ minHeight: "44px" }}
               >
-                <option value="vi">Tiếng Việt</option>
-                <option value="en">English</option>
-                <option value="bilingual">Bilingual</option>
+                <option value="VN_ONLY">{uiLanguage === "vi" ? "Tiếng Việt (VN Only)" : "Vietnamese (VN Only)"}</option>
+                <option value="EN_ONLY">{uiLanguage === "vi" ? "Tiếng Anh (EN Only)" : "English (EN Only)"}</option>
+                <option value="BILINGUAL">{uiLanguage === "vi" ? "Song Ngữ (Bilingual)" : "Bilingual"}</option>
               </select>
             </div>
           </div>

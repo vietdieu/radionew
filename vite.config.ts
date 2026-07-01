@@ -4,8 +4,11 @@ import path from 'path';
 import { defineConfig } from 'vite';
 
 export default defineConfig(() => {
+  // Tự động tắt HMR nếu là production hoặc có biến DISABLE_HMR=true
+  const isProduction = process.env.NODE_ENV === 'production';
+  const disableHmr = isProduction || process.env.DISABLE_HMR === 'true';
+
   return {
-    // ==== THÊM DÒNG NÀY ====
     base: '/',
     plugins: [react(), tailwindcss()],
     resolve: {
@@ -14,8 +17,9 @@ export default defineConfig(() => {
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true' ? { overlay: false } : false,
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Nếu disable HMR → false, ngược lại → chỉ tắt overlay nhưng vẫn bật HMR
+      hmr: disableHmr ? false : { overlay: false },
+      watch: disableHmr ? null : {},
     },
   };
 });

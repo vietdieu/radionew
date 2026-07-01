@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "dev:client": "vite",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --external:express --external:cors --external:dotenv --external:@google/genai --external:vite --external:@google-cloud/storage --external:@google-cloud/text-to-speech --external:uuid --external:xml2js --external:@supabase/supabase-js --external:ws --external:fsevents --sourcemap --outfile=server.cjs",
     "start": "node server.cjs",
     "clean": "rm -rf dist server.js server.cjs server.js.map server.cjs.map",
@@ -38,7 +39,7 @@
     "uuid": "^14.0.1",
     "vite": "^6.2.3",
     "xml2js": "^0.6.2",
-    "zod": "^4.4.3"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",

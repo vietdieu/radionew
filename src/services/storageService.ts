@@ -126,7 +126,14 @@ export function normalizeBriefing(item: any): SavedSummary {
       focus: preferences.focus || "",
       commuteType: preferences.commuteType || "driving",
       customInstructions: preferences.customInstructions || "",
-      language: preferences.language || "vi"
+      language: preferences.language || "vi",
+      languageMode: preferences.languageMode || (preferences.language === "vi" ? "VN_ONLY" : preferences.language === "en" ? "EN_ONLY" : "BILINGUAL"),
+      voiceVN: preferences.voiceVN || "vi-HN",
+      voiceEN: preferences.voiceEN || "Kore",
+      rate: preferences.rate || 1.0,
+      speed: preferences.speed || 1.0,
+      pitch: preferences.pitch || 1.0,
+      isDrivingMode: !!preferences.isDrivingMode
     },
     payload: {
       title: payload.title || "CommuteCast Briefing",

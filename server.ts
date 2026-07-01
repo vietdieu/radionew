@@ -3,16 +3,8 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import cors from "cors";
-import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
-import { tts as runEdgeTTS } from "edge-tts";
 import fs from "fs";
-import { Storage } from "@google-cloud/storage";
-import { TextToSpeechClient } from "@google-cloud/text-to-speech";
-import { v4 as uuidv4 } from "uuid";
-import xml2js from "xml2js";
-import { createClient } from "@supabase/supabase-js";
-import { BroadcastSpeechEngine } from "./src/services/broadcastSpeechEngine";
 
 dotenv.config();
 
@@ -27,6 +19,24 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// ===== MOCK BROADCAST ENGINE (tạm thời) =====
+// Nếu file broadcastSpeechEngine.ts bị lỗi, chúng ta sẽ dùng mock này
+let BroadcastSpeechEngine: any = null;
+try {
+  const module = await import("./src/services/broadcastSpeechEngine.js");
+  BroadcastSpeechEngine = module.BroadcastSpeechEngine;
+  console.log("[Server] BroadcastSpeechEngine loaded successfully.");
+} catch (err: any) {
+  console.warn("[Server] Failed to load BroadcastSpeechEngine, using fallback mock:", err.message);
+  // Mock object
+  BroadcastSpeechEngine = {
+    process: async (text: string, voice: string, tone: string, ai?: any) => {
+      console.log("[Mock] BroadcastSpeechEngine.process called");
+      return text;
+    }
+  };
+}
 
 let currentKeyIndex = 0;
 const keyCooldownMap = new Map<string, number>();
@@ -273,7 +283,9 @@ let cachedSharedBriefingsInMem: any[] | null = null;
 
 async function loadSharedBriefingsFromSupabaseAsync(): Promise<any[]> {
   const supabase = getSupabaseClient();
-  if (!supabase) return [];
+  if (!supabase) {
+    return [];
+  }
   try {
     let rawData: any = null;
     let downloadErr: any = null;
@@ -2267,10 +2279,28 @@ function getGcsClient(): Storage | null {
   return gcsClientInstance;
 }
 
+// ============================================================
+// SUPABASE CLIENT với Circuit Breaker + Caching
+// ============================================================
+
 let supabaseClientInstance: any = null;
+let supabaseMisconfigured = false;
+let supabaseCircuitOpenUntil = 0;
+const CIRCUIT_BREAKER_DURATION = 5 * 60 * 1000; // 5 phút
 
 function getSupabaseClient() {
+  // Nếu circuit breaker đang mở, không thử lại
+  if (supabaseMisconfigured && Date.now() < supabaseCircuitOpenUntil) {
+    return null;
+  }
+
+  // Nếu đã hết thời gian, reset trạng thái để thử lại
+  if (Date.now() >= supabaseCircuitOpenUntil) {
+    supabaseMisconfigured = false;
+  }
+
   if (supabaseClientInstance) return supabaseClientInstance;
+  if (supabaseMisconfigured) return null;
 
   let url = (process.env.SUPABASE_URL || "").trim();
   const key = (process.env.SUPABASE_ANON_KEY || "").trim();
@@ -2279,7 +2309,9 @@ function getSupabaseClient() {
   const isDefaultKey = key === "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez" || key === "";
 
   if (isDefaultUrl || isDefaultKey) {
-    console.log("[Podcast - Supabase] Supabase integration is unconfigured or using non-functional default dummy credentials. Disabling cloud sync.");
+    console.log("[Supabase Client] Supabase integration is unconfigured or using non-functional default dummy credentials. Disabling cloud sync.");
+    supabaseMisconfigured = true;
+    supabaseCircuitOpenUntil = Date.now() + CIRCUIT_BREAKER_DURATION;
     return null;
   }
 
@@ -2289,19 +2321,28 @@ function getSupabaseClient() {
       const projectRef = parts[1].split("/")[0];
       if (projectRef) {
         url = `https://${projectRef}.supabase.co`;
-        console.log(`[Podcast - Supabase] Auto-resolved dashboard URL configuration to REST/Storage API gateway: ${url}`);
+        console.log(`[Supabase Client] Auto-resolved dashboard URL to REST/Storage API gateway: ${url}`);
       }
     }
   }
 
   try {
     supabaseClientInstance = createClient(url, key, { auth: { persistSession: false } });
-    console.log(`[Podcast - Supabase] Initialized Supabase client successfully with URL: ${url}`);
+    console.log(`[Supabase Client] Initialized Supabase client successfully with URL: ${url}`);
+    supabaseMisconfigured = false;
+    return supabaseClientInstance;
   } catch (err) {
-    console.error("[Podcast - Supabase] Failed to bootstrap Supabase client:", err);
+    console.error("[Supabase Client] Failed to bootstrap Supabase client:", err);
+    supabaseMisconfigured = true;
+    supabaseCircuitOpenUntil = Date.now() + CIRCUIT_BREAKER_DURATION;
+    supabaseClientInstance = null;
+    return null;
   }
+}
 
-  return supabaseClientInstance;
+function isSupabaseAvailable(): boolean {
+  const client = getSupabaseClient();
+  return client !== null;
 }
 
 async function uploadAudioToSupabase(audioBuffer: Buffer, fileName: string, contentType: string = "audio/mpeg"): Promise<string> {
@@ -2864,15 +2905,39 @@ app.get("/api/podcast/feed", async (req, res): Promise<any> => {
 
 // ==================== SUPABASE CONFIG ENDPOINT ====================
 app.get("/api/supabase-config", (req, res) => {
-  const rawUrl = (process.env.SUPABASE_URL || "https://omcuhthpeenwlzdwzlra.supabase.co").trim();
-  const rawKey = (process.env.SUPABASE_ANON_KEY || "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez").trim();
+  const rawUrl = (process.env.SUPABASE_URL || "").trim();
+  const rawKey = (process.env.SUPABASE_ANON_KEY || "").trim();
 
-  // Validate that required variables exist and are non-empty
-  const hasUrl = rawUrl.length > 0 && !rawUrl.includes("placeholder") && !rawUrl.includes("dummy");
-  const hasKey = rawKey.length > 0 && !rawKey.includes("placeholder") && !rawKey.includes("dummy");
-  const isConfigured = hasUrl && hasKey;
+  // DANH SÁCH KEY/URL MẶC ĐỊNH CẦN LOẠI BỎ (dummy/example)
+  const DEFAULT_SUPABASE_URLS = [
+    "https://omcuhthpeenwlzdwzlra.supabase.co",
+    "https://your-project.supabase.co",
+    "https://example.supabase.co",
+    ""
+  ];
+  const DEFAULT_ANON_KEYS = [
+    "sb_publishable_jYhv4P78VyLfdsAEa70Mlw_T3vzR6Ez",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tY3VodGhwZWVud2x6ZHd6bHJhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDk0MTk3MTcsImV4cCI6MjAyNDk5NTcxN30.0wjvKqRqC9i9XQx1L5fjlW0qQzD1RqJmYQlY_5Qj8",
+    "your-anon-key",
+    ""
+  ];
 
-  if (isConfigured) {
+  // Kiểm tra nếu URL hoặc Key rơi vào danh sách mặc định
+  const isDefaultUrl = DEFAULT_SUPABASE_URLS.includes(rawUrl);
+  const isDefaultKey = DEFAULT_ANON_KEYS.includes(rawKey);
+
+  // Ngoài ra, kiểm tra nếu URL hoặc Key bắt đầu bằng "sb_" hoặc chứa "placeholder/dummy"
+  const isObviouslyFake =
+    rawKey.startsWith("sb_publishable_") ||
+    rawUrl.includes("placeholder") ||
+    rawUrl.includes("dummy") ||
+    rawKey.includes("placeholder") ||
+    rawKey.includes("dummy");
+
+  const isValid = !isDefaultUrl && !isDefaultKey && !isObviouslyFake && rawUrl.length > 0 && rawKey.length > 0;
+
+  if (isValid) {
+    // Chuyển đổi URL nếu là dashboard URL
     let url = rawUrl;
     if (url.includes("supabase.com/dashboard/project/")) {
       const parts = url.split("supabase.com/dashboard/project/");
@@ -2891,10 +2956,61 @@ app.get("/api/supabase-config", (req, res) => {
       environment: process.env.NODE_ENV || "development"
     });
   } else {
+    // Trả về lỗi rõ ràng
+    const reason = isDefaultUrl ? "Default Supabase URL detected" :
+                    isDefaultKey ? "Default/example Supabase ANON key detected" :
+                    isObviouslyFake ? "Credentials contain placeholder or dummy text" :
+                    "Missing or incomplete SUPABASE_URL or SUPABASE_ANON_KEY environment variables.";
     res.json({
       configured: false,
-      reason: "Missing or incomplete SUPABASE_URL or SUPABASE_ANON_KEY environment variables."
+      reason: reason,
+      hint: "Please set SUPABASE_URL and SUPABASE_ANON_KEY to your actual Supabase project credentials."
     });
+  }
+});
+
+
+app.get("/api/debug/podcast-file", (req, res) => {
+  try {
+    if (!fs.existsSync(PODCASTS_JSON_PATH)) {
+      return res.json({ error: "File not found" });
+    }
+    const data = fs.readFileSync(PODCASTS_JSON_PATH, "utf8");
+    const parsed = JSON.parse(data);
+    res.json({
+      count: parsed.length,
+      episodes: parsed.map((ep: any) => ({ id: ep.id, title: ep.title, pubDate: ep.pubDate }))
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/debug/cache-status", (req, res) => {
+  res.json({
+    cachedEpisodesInMem: cachedEpisodesInMem ? cachedEpisodesInMem.length : 0,
+    lastCacheSyncTime: lastCacheSyncTime,
+    cachedRssXml: cachedRssXml ? "có" : "không",
+    lastRssXmlTimestamp: lastRssXmlTimestamp,
+  });
+});
+
+app.post("/api/test-tts", async (req, res) => {
+  const { text, engine } = req.body;
+  try {
+    let result;
+    if (engine === "edge") {
+      result = await callEdgeTTSForChunk(text, "vi-HN", "0%");
+    } else if (engine === "gcloud") {
+      result = await callGoogleCloudTTSForChunk(text, "vi-HN", "conversational");
+    } else if (engine === "gemini") {
+      result = await callGeminiTTSForChunk(text, "en-US", "conversational");
+    } else {
+      result = await callGoogleTranslateTTSForChunk(text, "vi-HN");
+    }
+    res.json({ success: true, length: result.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -2947,49 +3063,5 @@ async function serveApp() {
     console.log(`[CommuteCast Backend] running on http://localhost:${PORT}`);
   });
 }
-
-app.get("/api/debug/podcast-file", (req, res) => {
-  try {
-    if (!fs.existsSync(PODCASTS_JSON_PATH)) {
-      return res.json({ error: "File not found" });
-    }
-    const data = fs.readFileSync(PODCASTS_JSON_PATH, "utf8");
-    const parsed = JSON.parse(data);
-    res.json({
-      count: parsed.length,
-      episodes: parsed.map((ep: any) => ({ id: ep.id, title: ep.title, pubDate: ep.pubDate }))
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get("/api/debug/cache-status", (req, res) => {
-  res.json({
-    cachedEpisodesInMem: cachedEpisodesInMem ? cachedEpisodesInMem.length : 0,
-    lastCacheSyncTime: lastCacheSyncTime,
-    cachedRssXml: cachedRssXml ? "có" : "không",
-    lastRssXmlTimestamp: lastRssXmlTimestamp,
-  });
-});
-
-app.post("/api/test-tts", async (req, res) => {
-  const { text, engine } = req.body;
-  try {
-    let result;
-    if (engine === "edge") {
-      result = await callEdgeTTSForChunk(text, "vi-HN", "0%");
-    } else if (engine === "gcloud") {
-      result = await callGoogleCloudTTSForChunk(text, "vi-HN", "conversational");
-    } else if (engine === "gemini") {
-      result = await callGeminiTTSForChunk(text, "en-US", "conversational");
-    } else {
-      result = await callGoogleTranslateTTSForChunk(text, "vi-HN");
-    }
-    res.json({ success: true, length: result.length });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 serveApp();

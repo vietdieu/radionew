@@ -1,3 +1,9 @@
+export enum LanguageMode {
+  VN_ONLY = "VN_ONLY",
+  EN_ONLY = "EN_ONLY",
+  BILINGUAL = "BILINGUAL"
+}
+
 export interface NewsChapter {
   topic: string;
   scriptText: string;
@@ -11,17 +17,26 @@ export interface SummaryPayload {
   conclusion: string;
 }
 
-export interface SummaryPreferences {
+export interface BroadcastConfiguration {
+  languageMode: LanguageMode;
+  language: "vi" | "en" | "bilingual"; // legacy compatibility
+  voiceVN: string;
+  voiceEN: string;
+  rate: number;
+  speed: number; // legacy compatibility
+  pitch: number;
+  isDrivingMode: boolean;
   targetDuration: "short" | "medium" | "long";
   tone: "conversational" | "informative" | "upbeat" | "analytical" | "witty";
-  voice: "Kore" | "Puck" | "Charon" | "Fenrir" | "Zephyr" | "vi-HN" | "vi-HCM" | "en-UK" | "en-US";
   focus: string;
   commuteType: "driving" | "transit" | "walking" | "cycling";
   customInstructions: string;
-  language: "en" | "vi" | "bilingual";
-  locationName?: string;       // Ví dụ: "Hà Nội" hoặc "Hồ Chí Minh" để check thời tiết free
-  commuteRoute?: string;      // Tuyến đường đi làm, ví dụ: "Đường Nguyễn Trãi" để AI tự tra cứu giao thông
+  locationName?: string;
+  commuteRoute?: string;
+  voice: "Kore" | "Puck" | "Charon" | "Fenrir" | "Zephyr" | "vi-HN" | "vi-HCM" | "en-UK" | "en-US" | string;
 }
+
+export interface SummaryPreferences extends BroadcastConfiguration {}
 
 export interface SavedSummary {
   id: string;
