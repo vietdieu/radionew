@@ -11,11 +11,19 @@ import {
   ExternalLink,
   Edit,
   X,
-  FileText
+  FileText,
+  Download,
+  Upload,
+  Shield,
+  Activity,
+  Clock,
+  ArrowUpDown,
+  CheckCircle2,
+  AlertTriangle
 } from "lucide-react";
 import { RSSFeed, RSSArticle } from "../types";
 import { saveRSSFeed, getRSSFeeds, deleteRSSFeed } from "../services/storageService";
-import { fetchRSSArticles, formatArticlesForPrompt } from "../services/rssService";
+import { fetchRSSArticles, formatArticlesForPrompt, exportToOPML, parseOPML } from "../services/rssService";
 import RSSFeedList from "./RSSFeedList";
 
 interface RSSManagerProps {
@@ -38,6 +46,9 @@ export default function RSSManager({
   const [newTitle, setNewTitle] = useState("");
   const [newCategory, setNewCategory] = useState("Thời sự");
   const [newFeedType, setNewFeedType] = useState<"news" | "podcast" | "blog">("news");
+  const [newPriority, setNewPriority] = useState<"low" | "medium" | "high">("medium");
+  const [autoRefreshStrategy, setAutoRefreshStrategy] = useState<"manual" | "5m" | "15m" | "30m">("manual");
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   
   // Editing state
   const [editingFeedId, setEditingFeedId] = useState<string | null>(null);
@@ -106,6 +117,23 @@ export default function RSSManager({
   useEffect(() => {
     loadFeedsAndArticles();
   }, []);
+
+  // Periodic Auto Refresh Strategy
+  useEffect(() => {
+    if (autoRefreshStrategy === "manual" || feeds.length === 0) return;
+    
+    let intervalMs = 5 * 60 * 1000; // default 5m
+    if (autoRefreshStrategy === "15m") intervalMs = 15 * 60 * 1000;
+    else if (autoRefreshStrategy === "30m") intervalMs = 30 * 60 * 1000;
+    
+    console.log(`[RSS Studio Auto Refresh] Starting periodic sync interval every ${autoRefreshStrategy}`);
+    const timer = setInterval(() => {
+      console.log(`[RSS Studio Auto Refresh] Triggering scheduled auto-sync...`);
+      handleFetchArticles(feeds, false);
+    }, intervalMs);
+    
+    return () => clearInterval(timer);
+  }, [autoRefreshStrategy, feeds]);
 
   const loadFeedsAndArticles = async () => {
     try {
@@ -178,6 +206,7 @@ export default function RSSManager({
         title: finalizedTitle,
         category: newCategory,
         feedType: newFeedType,
+        priority: newPriority,
         addedAt: editingFeedId ? (feeds.find(f => f.id === editingFeedId)?.addedAt || new Date().toLocaleString()) : new Date().toLocaleString()
       };
 
@@ -185,6 +214,7 @@ export default function RSSManager({
       setSuccessMsg(editingFeedId ? t.updateSuccess : t.testSuccess);
       setNewUrl("");
       setNewTitle("");
+      setNewPriority("medium");
       setEditingFeedId(null);
       
       // Reload feeds and fetch articles
@@ -206,6 +236,7 @@ export default function RSSManager({
     setNewTitle(feed.title);
     setNewCategory(feed.category || "Thời sự");
     setNewFeedType(feed.feedType || "news");
+    setNewPriority(feed.priority || "medium");
     setErrorMsg("");
     setSuccessMsg("");
   };
@@ -216,7 +247,77 @@ export default function RSSManager({
     setNewTitle("");
     setNewCategory("Thời sự");
     setNewFeedType("news");
+    setNewPriority("medium");
     setErrorMsg("");
+  };
+
+  const handleOPMLExport = () => {
+    try {
+      const opmlText = exportToOPML(feeds);
+      const blob = new Blob([opmlText], { type: "text/xml;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `commutecast_subscriptions_${new Date().toISOString().slice(0,10)}.opml`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      console.error("Failed to export OPML", e);
+    }
+  };
+
+  const handleOPMLImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setErrorMsg("");
+    setSuccessMsg("");
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const xmlText = event.target?.result as string;
+        if (!xmlText) return;
+
+        const parsedFeeds = parseOPML(xmlText);
+        if (parsedFeeds.length === 0) {
+          setErrorMsg(uiLanguage === "vi" ? "Tệp OPML không hợp lệ hoặc rỗng." : "Invalid or empty OPML file.");
+          return;
+        }
+
+        let importedCount = 0;
+        for (const pf of parsedFeeds) {
+          // Check if already subscribed to prevent duplicates
+          if (feeds.some(f => f.url === pf.url)) continue;
+
+          const newFeed: RSSFeed = {
+            id: "rss-" + Math.random().toString(36).slice(2, 10),
+            url: pf.url,
+            title: pf.title,
+            category: pf.category,
+            feedType: pf.feedType,
+            priority: pf.priority,
+            addedAt: new Date().toLocaleString()
+          };
+
+          await saveRSSFeed(newFeed);
+          importedCount++;
+        }
+
+        setSuccessMsg(uiLanguage === "vi" ? `Đã nhập thành công ${importedCount} nguồn tin từ OPML!` : `Successfully imported ${importedCount} channels from OPML!`);
+        
+        const updatedFeeds = await getRSSFeeds();
+        setFeeds(updatedFeeds);
+        if (updatedFeeds.length > 0) {
+          handleFetchArticles(updatedFeeds, false);
+        }
+      } catch (err) {
+        setErrorMsg(uiLanguage === "vi" ? "Lỗi phân tích cú pháp OPML." : "OPML Parse Error.");
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleDelete = async (id: string) => {
@@ -256,8 +357,12 @@ export default function RSSManager({
     setErrorMsg("");
 
     try {
-      const articles = await fetchRSSArticles(feedList, getApiUrl, force);
+      const articles = await fetchRSSArticles(feedList, getApiUrl, force, (updatedFeed) => {
+        // Real-time statistical feedback
+        setFeeds(prev => prev.map(f => f.id === updatedFeed.id ? updatedFeed : f));
+      });
       setActiveArticles(articles);
+      setLastSyncedAt(new Date().toLocaleTimeString());
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to fetch articles.");
     } finally {
@@ -507,6 +612,23 @@ export default function RSSManager({
                   <option value="blog">{uiLanguage === "vi" ? "✍️ Blog" : "✍️ Blog"}</option>
                 </select>
               </div>
+
+              {/* Feed Priority Dropdown */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1">
+                  <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  <span>{uiLanguage === "vi" ? "Ưu tiên:" : "Priority:"}</span>
+                </span>
+                <select
+                  value={newPriority}
+                  onChange={(e) => setNewPriority(e.target.value as any)}
+                  className="bg-card-bg border border-border-primary text-[11px] px-2.5 py-1.5 rounded-lg focus:outline-none font-semibold text-text-main cursor-pointer"
+                >
+                  <option value="high">🔥 {uiLanguage === "vi" ? "Cao" : "High"}</option>
+                  <option value="medium">⚡ {uiLanguage === "vi" ? "Trung bình" : "Medium"}</option>
+                  <option value="low">💤 {uiLanguage === "vi" ? "Thấp" : "Low"}</option>
+                </select>
+              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -576,96 +698,214 @@ export default function RSSManager({
 
         {/* Subscribed Feeds List */}
         <div className="space-y-2.5 border-t border-slate-100 pt-4 text-left">
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-            {t.rssListHeader} ({feeds.length})
-          </h4>
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1">
+              <BookOpen className="w-3.5 h-3.5 text-cyan-600" />
+              <span>{t.rssListHeader} ({feeds.length})</span>
+            </h4>
+            
+            {/* OPML import & export buttons */}
+            <div className="flex items-center gap-2">
+              <label className="px-2.5 py-1 text-[10px] font-bold border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg flex items-center gap-1 cursor-pointer transition select-none">
+                <Upload className="w-3 h-3 text-cyan-600" />
+                <span>{uiLanguage === "vi" ? "Nhập OPML" : "Import OPML"}</span>
+                <input
+                  type="file"
+                  accept=".xml,.opml"
+                  onChange={handleOPMLImport}
+                  className="hidden"
+                />
+              </label>
+              
+              {feeds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleOPMLExport}
+                  className="px-2.5 py-1 text-[10px] font-bold border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                  title={uiLanguage === "vi" ? "Xuất danh mục nguồn ra file OPML" : "Export active list to OPML"}
+                >
+                  <Download className="w-3 h-3 text-emerald-600" />
+                  <span>{uiLanguage === "vi" ? "Xuất OPML" : "Export OPML"}</span>
+                </button>
+              )}
+            </div>
+          </div>
 
           {feeds.length === 0 ? (
             <p className="text-xs text-slate-400 italic text-center py-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl">
               {t.emptyList}
             </p>
           ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {feeds.map((feed) => (
-                <div 
-                  key={feed.id}
-                  className={`p-3 rounded-xl border flex justify-between items-center hover:shadow-2xs transition-all text-left ${
-                    editingFeedId === feed.id ? "border-cyan-400 bg-cyan-50/20" : "border-slate-200 bg-white"
-                  }`}
-                >
-                  <div className="min-w-0 pr-3 space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 uppercase tracking-wider">
-                        {feed.category}
-                      </span>
-                      {feed.feedType && (
-                        <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 uppercase">
-                          {feed.feedType}
-                        </span>
-                      )}
-                    </div>
-                    <h5 className="text-xs font-bold text-slate-800 truncate">
-                      {feed.title}
-                    </h5>
-                    <p className="text-[10px] text-slate-400 truncate font-mono">
-                      {feed.url}
-                    </p>
-                  </div>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {feeds.map((feed) => {
+                // Health status render
+                const health = feed.healthStatus || "healthy";
+                const fetchSuccessRate = feed.fetchCount && feed.fetchCount > 0 
+                  ? Math.round(((feed.successCount || 0) / feed.fetchCount) * 100) 
+                  : null;
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleEditClick(feed)}
-                      className="p-1.5 text-slate-400 hover:text-cyan-600 hover:bg-slate-50 rounded-lg transition"
-                      title="Edit feed info"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                    </button>
-                    <a 
-                      href={feed.url} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg"
-                      title="Open XML"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(feed.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-50 rounded-lg transition"
-                      title="Delete feed"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                return (
+                  <div 
+                    key={feed.id}
+                    className={`p-3 rounded-xl border flex flex-col sm:flex-row justify-between sm:items-center gap-3 hover:shadow-2xs transition-all text-left ${
+                      editingFeedId === feed.id ? "border-cyan-400 bg-cyan-50/20" : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {/* Category badge */}
+                        <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 uppercase tracking-wider">
+                          {feed.category}
+                        </span>
+
+                        {/* Style/Type badge */}
+                        {feed.feedType && (
+                          <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 uppercase">
+                            {feed.feedType}
+                          </span>
+                        )}
+
+                        {/* Priority badge */}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 ${
+                          feed.priority === "high" 
+                            ? "bg-rose-50 text-rose-700 border border-rose-100" 
+                            : feed.priority === "low"
+                            ? "bg-slate-50 text-slate-500 border border-slate-100"
+                            : "bg-cyan-50 text-cyan-700 border border-cyan-100"
+                        }`}>
+                          {feed.priority === "high" ? "🔥 Cao" : feed.priority === "low" ? "💤 Thấp" : "⚡ TB"}
+                        </span>
+
+                        {/* Health indicator */}
+                        <span 
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 cursor-help ${
+                            health === "healthy" 
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-100" 
+                              : health === "unstable"
+                              ? "bg-amber-50 text-amber-700 border border-amber-100"
+                              : "bg-rose-50 text-rose-700 border border-rose-100"
+                          }`}
+                          title={feed.healthError ? `${feed.healthError}` : `${uiLanguage === "vi" ? "Nguồn hoạt động tốt" : "Feed is healthy"}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            health === "healthy" 
+                              ? "bg-emerald-500 animate-pulse" 
+                              : health === "unstable" 
+                              ? "bg-amber-500" 
+                              : "bg-rose-600"
+                          }`} />
+                          <span className="capitalize">{health === "healthy" ? (uiLanguage === "vi" ? "Khỏe" : "Healthy") : health === "unstable" ? (uiLanguage === "vi" ? "Chập chờn" : "Unstable") : (uiLanguage === "vi" ? "Lỗi" : "Error")}</span>
+                        </span>
+                      </div>
+
+                      <h5 className="text-xs font-bold text-slate-800 truncate">
+                        {feed.title}
+                      </h5>
+                      
+                      <p className="text-[10px] text-slate-400 truncate font-mono">
+                        {feed.url}
+                      </p>
+
+                      {/* Speed & Sync counts stats bar */}
+                      {(feed.fetchCount && feed.fetchCount > 0) ? (
+                        <div className="flex items-center gap-3 pt-0.5 text-[9px] font-mono font-medium text-slate-500">
+                          <span className="flex items-center gap-1">
+                            <Activity className="w-3 h-3 text-slate-400" />
+                            <span>{uiLanguage === "vi" ? `Tỉ lệ: ${fetchSuccessRate}% (${feed.successCount}/${feed.fetchCount})` : `Rate: ${fetchSuccessRate}% (${feed.successCount}/${feed.fetchCount})`}</span>
+                          </span>
+                          {feed.avgFetchDuration && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              <span>{Math.round(feed.avgFetchDuration)}ms</span>
+                            </span>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center gap-1 justify-end shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleEditClick(feed)}
+                        className="p-1.5 text-slate-400 hover:text-cyan-600 hover:bg-slate-50 rounded-lg transition"
+                        title="Edit feed info"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <a 
+                        href={feed.url} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg"
+                        title="Open XML"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(feed.id)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-50 rounded-lg transition"
+                        title="Delete feed"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Centralized manual RSS Refresh action buttons */}
+        {/* Auto-Refresh Strategy & Manual Sync Buttons */}
         {feeds.length > 0 && (
-          <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
-            <button
-              type="button"
-              onClick={() => handleManualRefresh(false)}
-              disabled={isFetchingArticles}
-              className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isFetchingArticles ? "animate-spin" : ""}`} />
-              <span>{t.btnFetchSummary}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleManualRefresh(true)}
-              disabled={isFetchingArticles}
-              className="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isFetchingArticles ? "animate-spin" : ""}`} />
-              <span>{t.btnFetchSummaryForce}</span>
-            </button>
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px]">
+              <div className="flex items-center gap-1.5 text-slate-600 text-left font-medium">
+                <Clock className="w-3.5 h-3.5 text-cyan-600" />
+                <span>{uiLanguage === "vi" ? "Tự động làm mới:" : "Auto Refresh strategy:"}</span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                {lastSyncedAt && (
+                  <span className="text-[10px] font-mono text-slate-400 bg-white border px-2 py-0.5 rounded-md">
+                    Sync: {lastSyncedAt}
+                  </span>
+                )}
+                
+                <select
+                  value={autoRefreshStrategy}
+                  onChange={(e) => setAutoRefreshStrategy(e.target.value as any)}
+                  className="bg-white border border-slate-200 rounded-md px-2 py-1 text-[11px] font-bold text-slate-700 cursor-pointer focus:outline-none"
+                >
+                  <option value="manual">{uiLanguage === "vi" ? "⚡ Chỉ thủ công" : "⚡ Manual Only"}</option>
+                  <option value="5m">{uiLanguage === "vi" ? "⏱️ Mỗi 5 phút" : "⏱️ Every 5 minutes"}</option>
+                  <option value="15m">{uiLanguage === "vi" ? "⏱️ Mỗi 15 phút" : "⏱️ Every 15 minutes"}</option>
+                  <option value="30m">{uiLanguage === "vi" ? "⏱️ Mỗi 30 phút" : "⏱️ Every 30 minutes"}</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => handleManualRefresh(false)}
+                disabled={isFetchingArticles}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isFetchingArticles ? "animate-spin" : ""}`} />
+                <span>{t.btnFetchSummary}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleManualRefresh(true)}
+                disabled={isFetchingArticles}
+                className="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isFetchingArticles ? "animate-spin" : ""}`} />
+                <span>{t.btnFetchSummaryForce}</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

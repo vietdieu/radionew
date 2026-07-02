@@ -51,9 +51,9 @@ function initTtsCache(): boolean {
 // Khởi tạo cache khi server start
 initTtsCache();
 
-// Tạo key cache từ text, voice, tone
-function getTtsCacheKey(text: string, voice: string, tone: string): string {
-  const hash = crypto.createHash('md5').update(`${text}_${voice}_${tone}`).digest('hex');
+// Tạo key cache từ text, voice, tone, emotion
+function getTtsCacheKey(text: string, voice: string, tone: string, emotion: string = ""): string {
+  const hash = crypto.createHash('md5').update(`${text}_${voice}_${tone}_${emotion}`).digest('hex');
   return hash;
 }
 
@@ -635,6 +635,149 @@ app.post("/api/summarize", async (req, res): Promise<any> => {
     const focus = preferences?.focus || "general overview";
     const commuteType = preferences?.commuteType || "driving";
     const customInstructions = preferences?.customInstructions || "";
+    const aiMode = preferences?.aiMode || "rewrite";
+
+    let aiModeInstructions = "";
+    if (language === "vi") {
+      if (aiMode === "rewrite") {
+        aiModeInstructions = `
+[AI MODE: REWRITE]
+- Mục tiêu chính: Viết lại (Rewrite) toàn bộ tin tức một cách mạch lạc, lôi cuốn và mượt mà nhất. Đảm bảo ngôn từ lưu loát, tự nhiên như lời nói trực tiếp.
+- Hãy tập trung vào việc làm cho câu từ trở nên hấp dẫn, sử dụng các phép liên kết câu uyển chuyển và từ vựng lôi cuốn người nghe.`;
+      } else if (aiMode === "fact_check") {
+        aiModeInstructions = `
+[AI MODE: FACT CHECK]
+- Mục tiêu chính: Vừa tổng hợp tin tức vừa thực hiện nhiệm vụ kiểm chứng sự thật (fact-checking). 
+- Trong mỗi chương, nếu có bất kỳ thông tin nào còn mơ hồ, phóng đại, gây tranh cãi hoặc cần làm rõ, bạn PHẢI phân tích, kiểm chứng và nêu rõ sự thật dựa trên kiến thức của bạn, đính chính hoặc cung cấp thêm thông tin cập nhật một cách khách quan và lịch sự trong lời bình kịch bản ('scriptText').`;
+      } else if (aiMode === "detect_duplicate") {
+        aiModeInstructions = `
+[AI MODE: DETECT DUPLICATE]
+- Mục tiêu chính: Phân tích kỹ các nguồn tin và phát hiện các chi tiết hoặc sự kiện trùng lặp.
+- Hãy gom nhóm chúng lại và loại bỏ hoàn toàn các thông tin thừa thãi hoặc trùng lặp giữa các bài báo thô. Tập trung biên kịch ('scriptText') độc quyền vào việc tổng hợp và trình bày các khía cạnh độc nhất, mới mẻ nhất của từng câu chuyện để người nghe không bị nghe lặp lại một sự việc.`;
+      } else if (aiMode === "podcast_style") {
+        aiModeInstructions = `
+[AI MODE: PODCAST STYLE]
+- Mục tiêu chính: Biên soạn kịch bản theo phong cách hai người dẫn chương trình đối thoại (Podcast Co-hosts) cực kỳ sống động và tự nhiên.
+- Sử dụng các cụm từ tương tác qua lại thân mật (ví dụ: "Chào người bạn đồng hành", "Bạn có biết điều này không?", "Đúng vậy, tôi nghĩ rằng..."), đưa ra bình luận hóm hỉnh cá nhân và đặt câu hỏi mở để thảo luận tin tức giữa hai người, tạo cảm giác như một buổi nói chuyện podcast trực tiếp thực sự.`;
+      } else if (aiMode === "morning_style") {
+        aiModeInstructions = `
+[AI MODE: MORNING STYLE]
+- Mục tiêu chính: Phong cách chào buổi sáng ngập tràn năng lượng tích cực, truyền động lực mạnh mẽ đầu ngày.
+- Hãy tích hợp các lời chúc buổi sáng tươi đẹp, nhắc nhở thời tiết nhẹ nhàng và khơi dậy hứng khởi, nụ cười vui tươi cho ngày làm việc mới của người nghe. Giữ nhịp điệu rạng rỡ, phấn khởi xuyên suốt bản tin.`;
+      } else if (aiMode === "driving_style") {
+        aiModeInstructions = `
+[AI MODE: DRIVING STYLE]
+- Mục tiêu chính: Chế độ Lái xe tập trung cao độ. Ngắn gọn, súc tích, đi thẳng vào ý chính và cực kỳ dễ hiểu khi người nghe đang bận tay lái trên đường.
+- Hãy lồng ghép tinh tế các lời nhắc nhở an toàn giao thông thiết thực (ví dụ: khuyên lái xe tập trung nhìn đường, chú ý gương chiếu hậu, giữ khoảng cách an toàn, không sử dụng điện thoại...) phù hợp với tuyến đường di chuyển của họ.`;
+      } else if (aiMode === "student_mode") {
+        aiModeInstructions = `
+[AI MODE: STUDENT MODE]
+- Mục tiêu chính: Chế độ Học sinh/Sinh viên - Đóng vai người thầy hoặc người bạn học thông thái, tận tâm.
+- Với mỗi chương tin tức, hãy chủ động giải thích sâu thêm các thuật ngữ khoa học, kinh tế, công nghệ phức tạp hoặc khái niệm học thuật xuất hiện trong bài viết bằng ngôn ngữ cực kỳ bình dân, dễ hiểu, giúp mở rộng kiến thức bổ trợ bổ ích cho người nghe trẻ tuổi.`;
+      } else if (aiMode === "executive_mode") {
+        aiModeInstructions = `
+[AI MODE: EXECUTIVE MODE]
+- Mục tiêu chính: Chế độ Giám đốc/Lãnh đạo. Báo cáo vĩ mô cô đọng, đi thẳng vào các con số, số liệu chính, chỉ số tài chính/kinh tế quan trọng và tác động chiến lược của tin tức đối với doanh nghiệp và thị trường toàn cầu.
+- Loại bỏ hoàn toàn các yếu tố rườm rà, kể chuyện dông dài hay từ ngữ cảm xúc thái quá. Giữ phong cách chuyên nghiệp, phân tích sắc bén và trực diện.`;
+      } else if (aiMode === "english_learning_mode") {
+        aiModeInstructions = `
+[AI MODE: ENGLISH LEARNING MODE]
+- Mục tiêu chính: Chế độ học tiếng Anh dành cho người học ngoại ngữ.
+- Ở CUỐI MỖI CHƯƠNG trong kịch bản 'scriptText', bạn bắt buộc phải tạo riêng một phần nhỏ có tiêu đề rực rỡ "English Corner" hoặc "Góc Tiếng Anh". Hãy chọn ra 2-3 từ vựng hoặc mẫu câu tiếng Anh cốt lõi, hữu ích vừa xuất hiện trong bản tin để giải nghĩa, kèm theo ví dụ đặt câu thực tế bằng cả tiếng Anh và tiếng Việt để người nghe học tập ngay trên đường đi làm.`;
+      }
+    } else if (language === "bilingual") {
+      if (aiMode === "rewrite") {
+        aiModeInstructions = `
+[AI MODE: REWRITE]
+- Primary goal: Seamlessly rewrite (Rewrite) the entire news in a beautiful, natural bilingual layout. Ensure highly fluent transitions, cohesive structure, and expressive bilingual pairing using the slash (/) format.`;
+      } else if (aiMode === "fact_check") {
+        aiModeInstructions = `
+[AI MODE: FACT CHECK]
+- Primary goal: Conduct rigorous, objective bilingual fact-checking on the raw material. 
+- In each chapter, if any claim or detail seems exaggerated, controversial, or vague, make sure to address, analyze, and clarify it in bilingual pairs in the 'scriptText', presenting accurate information neutrally for the listener.`;
+      } else if (aiMode === "detect_duplicate") {
+        aiModeInstructions = `
+[AI MODE: DETECT DUPLICATE]
+- Primary goal: Detect and filter duplicate events or redundant descriptions among the raw news feeds.
+- Consolidate similar news into a single, clean chapter, and present unique facts only in bilingual format. Avoid repetitive sentence structures.`;
+      } else if (aiMode === "podcast_style") {
+        aiModeInstructions = `
+[AI MODE: PODCAST STYLE]
+- Primary goal: Compose the script as a charming dialogue between two bilingual podcast co-hosts.
+- Use cozy, casual back-and-forth remarks, clever jokes, and conversational cues (e.g., "What's your take on this? / Bạn nghĩ sao về điều này?", "That's mind-blowing! / Thật là kinh ngạc!") in standard bilingual slash formatting to keep it super interactive.`;
+      } else if (aiMode === "morning_style") {
+        aiModeInstructions = `
+[AI MODE: MORNING STYLE]
+- Primary goal: Upbeat, warm, and highly motivational morning-show energy.
+- Integrate delightful morning greetings, friendly weather-related comments, and positive bilingual wishes to give the listener an exceptional and radiant start to their day.`;
+      } else if (aiMode === "driving_style") {
+        aiModeInstructions = `
+[AI MODE: DRIVING STYLE]
+- Primary goal: Dedicated driving mode. Focus on clear, highly scannable, and compact bilingual expressions.
+- Weave in thoughtful bilingual road safety warnings (e.g., "Keep your eyes on the road. / Hãy luôn tập trung nhìn đường.", "Stay safe. / Hãy luôn lái xe an toàn.") tailored to their current commute route.`;
+      } else if (aiMode === "student_mode") {
+        aiModeInstructions = `
+[AI MODE: STUDENT MODE]
+- Primary goal: High-value educational student mode.
+- In each chapter, act as a friendly bilingual mentor, explaining complex economic, scientific, or technical terms in simple bilingual pairs, ensuring that student listeners expand their vocabulary and general knowledge effortlessly.`;
+      } else if (aiMode === "executive_mode") {
+        aiModeInstructions = `
+[AI MODE: EXECUTIVE MODE]
+- Primary goal: High-level corporate/macro executive briefing in bilingual format.
+- Cut straight to key figures, business metrics, and structural/strategic impacts. Maintain an extremely professional, executive, and direct tone without any emotional fluff or unnecessary storytelling.`;
+      } else if (aiMode === "english_learning_mode") {
+        aiModeInstructions = `
+[AI MODE: ENGLISH LEARNING MODE]
+- Primary goal: Highly specialized English Learning Mode.
+- In this bilingual mode, at the end of every chapter's 'scriptText', you must include a specific, engaging 'English Corner / Góc Học Tiếng Anh' section. Pick 2-3 essential English terms or key idiomatic expressions used in the chapter, detail their definitions in Vietnamese, and provide practical bilingual examples.`;
+      }
+    } else { // English
+      if (aiMode === "rewrite") {
+        aiModeInstructions = `
+[AI MODE: REWRITE]
+- Primary goal: Elegantly rewrite (Rewrite) the entire news script to be highly engaging, eloquent, cohesive, and perfectly optimized for smooth spoken audio narration. Avoid stiff or repetitive phrases.`;
+      } else if (aiMode === "fact_check") {
+        aiModeInstructions = `
+[AI MODE: FACT CHECK]
+- Primary goal: Carry out objective and professional fact-checking of the source text.
+- In each chapter, point out any claims or statistics that are controversial, unverified, or misleading, and offer accurate background context, verified details, or neutral corrections within the spoken 'scriptText'.`;
+      } else if (aiMode === "detect_duplicate") {
+        aiModeInstructions = `
+[AI MODE: DETECT DUPLICATE]
+- Primary goal: Analyze news feeds for repetitive events or duplicated articles.
+- Group similar topics together and eliminate any redundant or wordy sentences. Focus solely on presenting the most distinct, unique, and up-to-date angles of each story in the final script.`;
+      } else if (aiMode === "podcast_style") {
+        aiModeInstructions = `
+[AI MODE: PODCAST STYLE]
+- Primary goal: Craft the script as a natural, engaging conversation between two friendly podcast co-hosts.
+- Include organic dialogue transitions, polite agreements or witty banter, casual side-narratives, and thought-provoking questions to make the audio feel 100% like a real live-recorded podcast talk.`;
+      } else if (aiMode === "morning_style") {
+        aiModeInstructions = `
+[AI MODE: MORNING STYLE]
+- Primary goal: Radiant, high-energy morning radio show style.
+- Start with bright morning greetings, enthusiastic weather tie-ins, and highly motivating remarks to lift the listener's spirits and energize them for the workday ahead.`;
+      } else if (aiMode === "driving_style") {
+        aiModeInstructions = `
+[AI MODE: DRIVING STYLE]
+- Primary goal: Premium hands-free driving mode. Write short, crystal-clear, and punchy sentences.
+- Weave in helpful road safety recommendations (e.g., stay focused, keep a safe distance, stay alert on your specific commute route) seamlessly into the spoken kịch bản.`;
+      } else if (aiMode === "student_mode") {
+        aiModeInstructions = `
+[AI MODE: STUDENT MODE]
+- Primary goal: Interactive and helpful student learning mode.
+- In each news story, act as an educational companion. Clearly unpack and explain any complex terms, scientific concepts, or technical vocabulary in highly accessible, simple English, making the commute educational.`;
+      } else if (aiMode === "executive_mode") {
+        aiModeInstructions = `
+[AI MODE: EXECUTIVE MODE]
+- Primary goal: Polished, concise executive-level macroeconomic briefing.
+- Focus strictly on key stats, quantitative metrics, market implications, and strategic outcomes. Keep the delivery formal, objective, and entirely devoid of fluff, fillers, or elaborate narratives.`;
+      } else if (aiMode === "english_learning_mode") {
+        aiModeInstructions = `
+[AI MODE: ENGLISH LEARNING MODE]
+- Primary goal: English language learning focus for ESL or general learners.
+- At the end of every chapter's spoken 'scriptText', create an explicit 'English Vocabulary Highlight' segment. Call out 2-3 advanced words or useful expressions from the news text, explaining their exact meanings clearly, and giving practical example sentences.`;
+      }
+    }
 
     const lengthGuidelines =
       targetDuration === "short"
@@ -675,6 +818,9 @@ Your tone must reflect a warm, authoritative, and deeply engaging broadcast anch
 
 ${languageInstructions}
 
+[AI MODE INSTRUCTION]
+${aiModeInstructions}
+
 IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 1. The script fields MUST be written EXACTLY as they should be spoken out loud by a seasoned news anchor.
 2. NHÂN VẬT & PHONG THÁI PHÁT THANH VIÊN KỲ CỰU (VIETNAMESE ANCHOR ROLE):
@@ -700,6 +846,9 @@ Your tone must reflect a warm, authoritative, and deeply engaging broadcast anch
 
 ${languageInstructions}
 
+[AI MODE INSTRUCTION]
+${aiModeInstructions}
+
 IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 1. The script fields MUST be written EXACTLY as they should be spoken out loud by a seasoned news anchor.
 2. BILINGUAL RADIO ANCHOR ROLE:
@@ -724,6 +873,9 @@ IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 Your tone must reflect a warm, authoritative, and deeply engaging broadcast anchor who naturally connects with listeners, rather than a robotic or flat text-to-speech engine. 
 
 ${languageInstructions}
+
+[AI MODE INSTRUCTION]
+${aiModeInstructions}
 
 IMPORTANT GUIDELINES & SCRIPT STRUCTURE:
 1. The script fields MUST be written EXACTLY as they should be spoken out loud by a seasoned news anchor.
@@ -1059,7 +1211,7 @@ async function callGoogleCloudTTSForChunk(chunk: string, voice: string, tone: st
 }
 
 // CẢI TIẾN: Gemini TTS với systemInstruction tách biệt hoàn toàn để đạt chất lượng phát thanh xuất sắc
-async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string): Promise<string> {
+async function callGeminiTTSForChunk(chunk: string, voice: string, tone: string, emotion?: string): Promise<string> {
   let voiceName = "Kore";
   let systemInstructionText = "";
 
@@ -1101,6 +1253,32 @@ DELIVERY:
 - Avoid flat, robotic, or monotonous text-to-speech cadence.
 - Insert natural human-like breathing and micro-pauses at commas and periods to create beautiful rhythm.
 - Infuse sophisticated vocal modulation, subtle rising and falling intonations to sound extremely human, friendly, and engaging.`;
+  }
+
+  // Inject Emotion guidance
+  if (emotion) {
+    const isViLang = voice === "vi-HN" || voice === "vi-HCM" || voice === "vi";
+    if (emotion === "cheerful") {
+      systemInstructionText += isViLang 
+        ? `\nEMOTION/STYLE: Hãy thể hiện phong cách VUI TƯƠI, rạng rỡ, hào hứng, ngập tràn năng lượng tích cực và sự ấm áp của một ngày mới.`
+        : `\nEMOTION/STYLE: Express a CHEERFUL, bright, enthusiastic, and joyful vibe. Sound friendly and happy with high positive energy.`;
+    } else if (emotion === "professional") {
+      systemInstructionText += isViLang
+        ? `\nEMOTION/STYLE: Hãy thể hiện phong cách CHUYÊN NGHIỆP, đĩnh đạc, đáng tin cậy, nghiêm túc, giọng nói rõ ràng và phong thái tự tin.`
+        : `\nEMOTION/STYLE: Express a highly PROFESSIONAL, reliable, calm, authoritative, and corporate vibe. Sound confident and polished.`;
+    } else if (emotion === "calm") {
+      systemInstructionText += isViLang
+        ? `\nEMOTION/STYLE: Hãy thể hiện phong cách ĐIỀM TĨNH, nhẹ nhàng, du dương, nhịp độ vừa phải và tạo cảm giác an tâm, thư giãn.`
+        : `\nEMOTION/STYLE: Express a soothing, CALM, soft, and relaxed vibe. Paced gently, reassuring and warm.`;
+    } else if (emotion === "energetic") {
+      systemInstructionText += isViLang
+        ? `\nEMOTION/STYLE: Hãy thể hiện phong cách MẠNH MẼ, đầy nhiệt huyết, giọng đọc dứt khoát, hào hứng và truyền cảm hứng mạnh mẽ.`
+        : `\nEMOTION/STYLE: Express a highly ENERGETIC, exciting, passionate, dynamic, and motivating vibe. Strong vocal presence.`;
+    } else if (emotion === "empathetic") {
+      systemInstructionText += isViLang
+        ? `\nEMOTION/STYLE: Hãy thể hiện phong cách THẤU HIỂU, đồng cảm, ấm áp, nhả chữ chân thành và truyền tải thông tin đầy cảm thông.`
+        : `\nEMOTION/STYLE: Express an EMPATHETIC, caring, understanding, and deeply warm vibe. Express heartfelt sincerity and soft tones.`;
+    }
   }
 
   const response = await callGeminiWithRotation((ai) => 
@@ -1192,7 +1370,7 @@ function detectLanguage(text: string): "vi" | "en" {
 
 // ===== HÀM TỔNG HỢP ÂM THANH TỐI ƯU =====
 
-async function synthesizeSingleChunk(chunk: string, preferredVoice: string, tone: string): Promise<Buffer> {
+async function synthesizeSingleChunk(chunk: string, preferredVoice: string, tone: string, emotion?: string): Promise<Buffer> {
   const lang = detectLanguage(chunk);
   console.log(`[TTS-CHUNK-DEBUG] Chunk: "${chunk.substring(0, 40)}..." -> Detected language: ${lang}`);
 
@@ -1239,7 +1417,7 @@ async function synthesizeSingleChunk(chunk: string, preferredVoice: string, tone
         name: "gemini", 
         fn: async () => {
           if (now < globalGeminiTtsDisabledUntil) throw new Error("Gemini disabled");
-          return await callGeminiTTSForChunk(chunk, voiceToUse, tone);
+          return await callGeminiTTSForChunk(chunk, voiceToUse, tone, emotion);
         }
       },
       { 
@@ -1254,7 +1432,7 @@ async function synthesizeSingleChunk(chunk: string, preferredVoice: string, tone
         name: "gemini", 
         fn: async () => {
           if (now < globalGeminiTtsDisabledUntil) throw new Error("Gemini disabled");
-          return await callGeminiTTSForChunk(chunk, voiceToUse, tone);
+          return await callGeminiTTSForChunk(chunk, voiceToUse, tone, emotion);
         }
       },
       { 
@@ -1307,11 +1485,11 @@ async function synthesizeSingleChunk(chunk: string, preferredVoice: string, tone
 
 // ================== ENDPOINT TTS CHÍNH (CẬP NHẬT) ==================
 app.post("/api/tts", async (req, res): Promise<any> => {
-  const { text, voice, tone } = req.body;
+  const { text, voice, tone, emotion } = req.body;
   const isVi = voice?.startsWith("vi") || false;
 
   console.log(`[TTS-DEBUG] Text length: ${text?.length || 0}`);
-  console.log(`[TTS-DEBUG] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}`);
+  console.log(`[TTS-DEBUG] Voice: ${voice || 'default'}, Tone: ${tone || 'conversational'}, Emotion: ${emotion || 'neutral'}`);
   console.log(`[TTS-DEBUG] Is Vietnamese: ${isVi}`);
 
   try {
@@ -1326,10 +1504,11 @@ app.post("/api/tts", async (req, res): Promise<any> => {
     // 2. Kiểm tra cache (File System)
     const voiceToUse = voice || "en-US";
     const toneToUse = tone || "conversational";
-    const cacheKey = getTtsCacheKey(text, voiceToUse, toneToUse);
+    const emotionToUse = emotion || "cheerful";
+    const cacheKey = getTtsCacheKey(text, voiceToUse, toneToUse, emotionToUse);
     const cachedAudio = getCachedTtsFile(cacheKey);
     if (cachedAudio) {
-      console.log(`[TTS] ✅ Cache hit! Returning cached audio.`);
+      console.log(`[TTS] ✅ Cache hit with emotion! Returning cached audio.`);
       return res.json({ 
         base64Audio: cachedAudio.toString("base64"),
         engine: "cache",
@@ -1383,7 +1562,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         const subChunks = chunk.split("/").map(p => p.trim()).filter(p => p.length > 0);
         
         const subPromises = subChunks.map(subChunk => 
-          synthesizeSingleChunk(subChunk, voiceToUse, toneToUse)
+          synthesizeSingleChunk(subChunk, voiceToUse, toneToUse, emotionToUse)
         );
         const buffers = await Promise.all(subPromises);
         return Buffer.concat(buffers);
@@ -1399,7 +1578,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
         if (hasEn && hasVi) {
           console.log(`[TTS-DEBUG] Implicit mixed-language chunk detected: "${chunk.substring(0, 50)}..."`);
           const subPromises = sentences.map(sentence => 
-            synthesizeSingleChunk(sentence, voiceToUse, toneToUse)
+            synthesizeSingleChunk(sentence, voiceToUse, toneToUse, emotionToUse)
           );
           const buffers = await Promise.all(subPromises);
           return Buffer.concat(buffers);
@@ -1407,7 +1586,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
       }
 
       // Chunk đơn ngữ
-      return await synthesizeSingleChunk(chunk, voiceToUse, toneToUse);
+      return await synthesizeSingleChunk(chunk, voiceToUse, toneToUse, emotionToUse);
     });
 
     const audioBuffers = await Promise.all(chunkPromises);
@@ -1443,7 +1622,7 @@ app.post("/api/tts", async (req, res): Promise<any> => {
 
 // 3. Generate news
 app.post("/api/generate-news", async (req, res): Promise<any> => {
-  const { category, language } = req.body;
+  const { category, language, aiMode } = req.body;
   const isVi = language === "vi" || language === "bilingual";
 
   try {
@@ -1455,11 +1634,11 @@ app.post("/api/generate-news", async (req, res): Promise<any> => {
     if (language === "vi" || language === "bilingual") {
       prompt = `Hãy viết một bài báo/tin tức nóng hổi, thực tế, hấp dẫn và chi tiết về lĩnh vực "${category}" bằng Tiếng Việt.
 Tin tức cần có tiêu đề rõ ràng (ví dụ: "[Tiêu đề]: nội dung..."), chứa khoảng 2-3 thông tin/sự kiện nổi bật khác nhau mang tính thời sự cao.
-Độ dài khoảng 300-400 từ. Hãy viết trực tiếp nội dung bài viết, không thêm lời chào hay ghi chú ngoài lề.`;
+Độ dài khoảng 300-400 từ. Hãy viết trực tiếp nội dung bài viết, không thêm lời chào hay ghi chú ngoài lề.${aiMode ? `\nHướng tiếp cận phong cách biên tập: Chế độ ${aiMode}.` : ""}`;
     } else {
       prompt = `Write a realistic, engaging, and detailed news article or report about the field "${category}" in English.
 It should have a clear title (e.g., "[Title]: content..."), contain 2-3 fresh breaking events or interesting analysis.
-Length: roughly 300-400 words. Write the article content directly, with no extra conversational preambles or notes.`;
+Length: roughly 300-400 words. Write the article content directly, with no extra conversational preambles or notes.${aiMode ? `\nStyle/Approach preference: Mode ${aiMode}.` : ""}`;
     }
 
     const hasGroq = !!process.env.GROQ_API_KEY;

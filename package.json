@@ -7,7 +7,7 @@
     "dev": "tsx server.ts",
     "dev:client": "vite",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --external:express --external:cors --external:dotenv --external:@google/genai --external:vite --external:@google-cloud/storage --external:@google-cloud/text-to-speech --external:uuid --external:xml2js --external:@supabase/supabase-js --external:ws --external:fsevents --sourcemap --outfile=server.js",
-"start": "node server.js",
+    "start": "node server.js",
     "clean": "rm -rf dist server.js server.cjs server.js.map server.cjs.map",
     "lint": "tsc --noEmit"
   },
@@ -44,5 +44,13 @@
   "devDependencies": {
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14"
+  },
+  "allowScripts": {
+    "@google/genai@2.9.0": true,
+    "protobufjs@7.6.4": true,
+    "esbuild@0.25.12": true
+  },
+  "overrides": {
+    "uuid": "$uuid"
   }
 }

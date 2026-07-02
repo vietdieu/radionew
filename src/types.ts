@@ -34,6 +34,16 @@ export interface BroadcastConfiguration {
   locationName?: string;
   commuteRoute?: string;
   voice: "Kore" | "Puck" | "Charon" | "Fenrir" | "Zephyr" | "vi-HN" | "vi-HCM" | "en-UK" | "en-US" | string;
+  aiMode?: "rewrite" | "fact_check" | "detect_duplicate" | "podcast_style" | "morning_style" | "driving_style" | "student_mode" | "executive_mode" | "english_learning_mode" | string;
+  audioEmotion?: string;
+  audioPauseDuration?: number;
+  audioPronunciationDict?: Array<{ word: string; replace: string }>;
+  audioMusicGenre?: string;
+  audioMusicVolume?: number;
+  audioNormalize?: boolean;
+  audioLimiter?: boolean;
+  audioFadeDuration?: number;
+  audioNoiseReduction?: boolean;
 }
 
 export interface SummaryPreferences extends BroadcastConfiguration {}
@@ -65,6 +75,13 @@ export interface RSSFeed {
   feedType?: "news" | "podcast" | "blog";
   addedAt: string;
   lastFetchedAt?: string;
+  // Sprint 1 RSS Studio Optional Fields
+  priority?: "low" | "medium" | "high";
+  healthStatus?: "healthy" | "unstable" | "failing";
+  healthError?: string;
+  fetchCount?: number;
+  successCount?: number;
+  avgFetchDuration?: number; // duration in ms
 }
 
 export interface RSSArticle {
@@ -75,6 +92,8 @@ export interface RSSArticle {
   feedTitle?: string;
   feedCategory?: string;
   feedType?: "news" | "podcast" | "blog";
+  feedId?: string; // Optional reference to parent feed
+  isDuplicate?: boolean; // Sprint 1 duplicate detection flag
 }
 
 export interface PublishedEpisode {

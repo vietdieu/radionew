@@ -33,7 +33,17 @@ const DEFAULT_PREFERENCES: BroadcastConfiguration = {
   customInstructions: "",
   locationName: "Hanoi",
   commuteRoute: "",
-  voice: "vi-HN"
+  voice: "vi-HN",
+  aiMode: "rewrite",
+  audioEmotion: "cheerful",
+  audioPauseDuration: 0.25,
+  audioPronunciationDict: [],
+  audioMusicGenre: "none",
+  audioMusicVolume: 0.15,
+  audioNormalize: false,
+  audioLimiter: false,
+  audioFadeDuration: 1.5,
+  audioNoiseReduction: false
 };
 
 const UserPreferencesContext = createContext<UserPreferencesContextType | undefined>(undefined);
@@ -71,6 +81,16 @@ export function UserPreferencesProvider({ children }: { children: React.ReactNod
         const customInstructions = parsed.customInstructions || DEFAULT_PREFERENCES.customInstructions;
         const locationName = parsed.locationName || DEFAULT_PREFERENCES.locationName;
         const commuteRoute = parsed.commuteRoute || DEFAULT_PREFERENCES.commuteRoute;
+        const aiMode = parsed.aiMode || DEFAULT_PREFERENCES.aiMode;
+        const audioEmotion = parsed.audioEmotion || DEFAULT_PREFERENCES.audioEmotion;
+        const audioPauseDuration = parsed.audioPauseDuration !== undefined ? parsed.audioPauseDuration : DEFAULT_PREFERENCES.audioPauseDuration;
+        const audioPronunciationDict = parsed.audioPronunciationDict || DEFAULT_PREFERENCES.audioPronunciationDict;
+        const audioMusicGenre = parsed.audioMusicGenre || DEFAULT_PREFERENCES.audioMusicGenre;
+        const audioMusicVolume = parsed.audioMusicVolume !== undefined ? parsed.audioMusicVolume : DEFAULT_PREFERENCES.audioMusicVolume;
+        const audioNormalize = parsed.audioNormalize !== undefined ? parsed.audioNormalize : DEFAULT_PREFERENCES.audioNormalize;
+        const audioLimiter = parsed.audioLimiter !== undefined ? parsed.audioLimiter : DEFAULT_PREFERENCES.audioLimiter;
+        const audioFadeDuration = parsed.audioFadeDuration !== undefined ? parsed.audioFadeDuration : DEFAULT_PREFERENCES.audioFadeDuration;
+        const audioNoiseReduction = parsed.audioNoiseReduction !== undefined ? parsed.audioNoiseReduction : DEFAULT_PREFERENCES.audioNoiseReduction;
 
         return {
           languageMode,
@@ -88,7 +108,17 @@ export function UserPreferencesProvider({ children }: { children: React.ReactNod
           customInstructions,
           locationName,
           commuteRoute,
-          voice
+          voice,
+          aiMode,
+          audioEmotion,
+          audioPauseDuration,
+          audioPronunciationDict,
+          audioMusicGenre,
+          audioMusicVolume,
+          audioNormalize,
+          audioLimiter,
+          audioFadeDuration,
+          audioNoiseReduction
         };
       }
     } catch (e) {

@@ -66,7 +66,7 @@ import { PersonalMemory } from "./features/memory/PersonalMemory";
 import { PwaStatus } from "./features/pwa/PwaStatus";
 import { DownloadManager } from "./features/download/DownloadManager";
 import { SettingsCenter } from "./features/settings/SettingsCenter";
-import { addToQueue, getPlayQueue, getPersonalMemory, removeFromQueue, recordListeningSession } from "./features/store";
+import { addToQueue, getPlayQueue, getPersonalMemory, removeFromQueue, recordListeningSession, addToPlaybackHistory, getRepeatMode, getAutoContinue } from "./features/store";
 import { useKeyboardShortcuts } from "./features/keyboard/useKeyboardShortcuts";
 import { Brain, ListMusic, ListPlus, Settings } from "lucide-react";
 
@@ -84,6 +84,7 @@ import UserProfile from "./components/UserProfile";
 import SyncStatus from "./components/SyncStatus";
 import { syncSaveVoiceHistoryAsync } from "./services/syncService";
 import { saveEpisodeToOffline, getEpisodeFromOffline, deleteOldEpisodes } from "./services/offlineStorageService";
+import Sidebar, { TabType } from "./components/Sidebar";
 
 // Translation Dictionary for English and Vietnamese interface
 const translations = {
@@ -363,6 +364,7 @@ export const sendNotification = async (title: string, options?: NotificationOpti
 export default function App() {
   const [uiLanguage, setUiLanguage] = useState<"vi" | "en">("vi");
   const t = translations[uiLanguage];
+  const [activeTab, setActiveTab] = useState<TabType>("dashboard");
 
   // News State
   const [newsContent, setNewsContent] = useState<string>("");
@@ -848,7 +850,8 @@ const handleCreateNews = async (categoryOverride?: string) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         category: categoryToUse,
-        language: preferences.language
+        language: preferences.language,
+        aiMode: preferences.aiMode
       })
     });
 
@@ -1120,13 +1123,31 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
 
     let completedCount = 0;
     const ttsPromises = synthesisTimeline.map(async (segment, i) => {
+      let processedText = segment.text;
+      if (preferences.audioPronunciationDict && preferences.audioPronunciationDict.length > 0) {
+        const sortedDict = [...preferences.audioPronunciationDict].sort((a, b) => b.word.length - a.word.length);
+        for (const entry of sortedDict) {
+          if (!entry.word.trim()) continue;
+          try {
+            const escaped = entry.word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+            processedText = processedText.replace(regex, entry.replace);
+            // also do simple search if word boundary fails
+            processedText = processedText.split(entry.word).join(entry.replace);
+          } catch (e) {
+            console.warn("Error replacing custom pronunciation word", entry.word, e);
+          }
+        }
+      }
+
       const ttsRes = await fetch(getApiUrl("/api/tts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: segment.text,
+          text: processedText,
           voice: preferences.voice,
-          tone: preferences.tone
+          tone: preferences.tone,
+          emotion: preferences.audioEmotion
         })
       });
 
@@ -1275,6 +1296,15 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
   };
 
   const handlePlayerEnded = async () => {
+    // Check if Sleep Timer is set to "End of current briefing"
+    const sleepAtEnd = localStorage.getItem("cc_sleep_at_briefing_end") === "true";
+    if (sleepAtEnd) {
+      localStorage.removeItem("cc_sleep_at_briefing_end");
+      localStorage.removeItem("cc_sleep_seconds_left");
+      // Stop playing, trigger a state update to stop or keep as paused
+      return;
+    }
+
     // 1. Record listen session to statistics and AI memory
     if (activePayload) {
       const estimatedSeconds = activePayload.chapters.reduce(
@@ -1287,6 +1317,33 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         activePayload.chapters[0]?.topic || "News",
         "CommuteCast Podcast Feed"
       );
+
+      // Add the ended item to Playback History
+      const playedQueueItem = {
+        id: selectedBriefId || `briefing-${Date.now()}`,
+        title: activePayload.title || activeTitle || "Untitled",
+        subtitle: activePayload.subtitle || (uiLanguage === "vi" ? "Bản tin tổng hợp" : "Summarized Briefing"),
+        duration: estimatedSeconds,
+        type: "custom" as const,
+        payload: activePayload
+      };
+      addToPlaybackHistory(playedQueueItem);
+    }
+
+    const repeatMode = getRepeatMode();
+    const autoContinue = getAutoContinue();
+
+    if (repeatMode === "one") {
+      // Repeat current item: replay
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("commutecast-toggle-play"));
+      }, 1000);
+      return;
+    }
+
+    if (!autoContinue) {
+      // Auto continue is disabled, stop playback
+      return;
     }
 
     // 2. Play next item in Smart Queue if available
@@ -1315,6 +1372,39 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         }
       } catch (err) {
         console.error("Failed to auto-play next queue item:", err);
+      }
+    } else if (repeatMode === "all") {
+      // Repeat All: repopulate queue from History and play first
+      const { getPlaybackHistory, savePlayQueue } = await import("./features/store");
+      const history = getPlaybackHistory();
+      if (history.length > 0) {
+        const reordered = [...history].reverse();
+        savePlayQueue(reordered);
+
+        const nextItem = reordered[0];
+        removeFromQueue(nextItem.id);
+
+        try {
+          let fullItem = await getEpisodeFromOffline(nextItem.id);
+          if (!fullItem) {
+            fullItem = await getFullBriefing(nextItem.id);
+          }
+          if (fullItem) {
+            setActivePayload(fullItem.payload);
+            setActiveAudioChunks(fullItem.audioChunks || []);
+            setActiveTitle(fullItem.payload.title);
+            updatePreferences(fullItem.preferences);
+            setSelectedBriefId(fullItem.id);
+            setStep("ready");
+            
+            // Trigger custom event to start playing immediately
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent("commutecast-toggle-play"));
+            }, 1000);
+          }
+        } catch (err) {
+          console.error("Failed to auto-play next queue item in Repeat All:", err);
+        }
       }
     }
   };
@@ -1471,11 +1561,14 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
         </div>
       </header>
 
-      {/* Main Grid Workdesk */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 grid grid-cols-1 md:grid-cols-12 gap-6 lg:gap-8">
+      {/* Main Wrapper Layout with Sidebar & Content panel */}
+      <div className="flex flex-col md:flex-row w-full min-h-[calc(100vh-4rem)] max-w-[1600px] mx-auto relative">
+        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} uiLanguage={uiLanguage} />
         
-        {/* RSS Auto-Briefing Notification banner */}
-        {showRssNotification && rssNotificationArticles.length > 0 && (
+        <main className="flex-1 px-4 md:px-8 py-6 md:py-8 overflow-y-auto max-w-full pb-20 md:pb-8">
+          
+          {/* RSS Auto-Briefing Notification banner */}
+          {showRssNotification && rssNotificationArticles.length > 0 && activeTab === "dashboard" && (
           <div className="md:col-span-12 p-4 bg-gradient-to-r from-cyan-500 to-indigo-600 text-slate-950 rounded-2xl shadow-lg border border-cyan-400/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in relative overflow-hidden text-left" id="rss-alert-banner">
             <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none" />
             <div className="flex items-center gap-3 relative">
@@ -1520,8 +1613,10 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
           </div>
         )}
 
-        {/* Left Side setup */}
-        <section className="md:col-span-7 flex flex-col gap-6" id="setup-panel-desktop">
+        {activeTab === "dashboard" && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-fade-in">
+            {/* Left Column: Generator Desk (7 cols) */}
+            <section className="lg:col-span-7 flex flex-col gap-6" id="setup-panel-desktop">
           
           {/* Smart Topic Suggestions */}
           <TopicSuggestions
@@ -1859,6 +1954,132 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
                 </p>
               </div>
 
+              {/* AI Studio Transformation Mode Selector */}
+              <div className="md:col-span-2 bg-gradient-to-br from-indigo-50/50 via-slate-50/20 to-cyan-50/40 p-5 border border-indigo-100 rounded-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
+                
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="p-1.5 bg-indigo-600 text-white rounded-lg shadow-sm">
+                    <Brain className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest">
+                      {uiLanguage === "vi" ? "🧠 AI Studio - Chế Độ Biên Tập & Biến Đổi" : "🧠 AI Studio - Editing & Transformation Modes"}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {uiLanguage === "vi" ? "Chọn chế độ xử lý để Gemini biến đổi nguồn tin thô thành kịch bản chuyên biệt" : "Choose a transformation engine for Gemini to customize your spoken script"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {[
+                    {
+                      key: "rewrite",
+                      icon: <Sparkles className="w-4 h-4 text-cyan-600" />,
+                      labelVi: "Fluent Rewrite",
+                      descVi: "Viết lại tin tức mạch lạc, trôi chảy, tối ưu giọng đọc.",
+                      labelEn: "Fluent Rewrite",
+                      descEn: "Rewrite raw material to be highly cohesive and readable."
+                    },
+                    {
+                      key: "fact_check",
+                      icon: <ShieldAlert className="w-4 h-4 text-rose-500" />,
+                      labelVi: "Fact Checker",
+                      descVi: "Đối soát sự thật, kiểm chứng thông tin phóng đại.",
+                      labelEn: "Fact Checker",
+                      descEn: "Verify unverified claims and add objective context."
+                    },
+                    {
+                      key: "detect_duplicate",
+                      icon: <Compass className="w-4 h-4 text-emerald-600" />,
+                      labelVi: "Deduplication",
+                      descVi: "Gom nhóm tin, khử chi tiết trùng lặp thừa thãi.",
+                      labelEn: "Deduplication",
+                      descEn: "Group similar feeds and eliminate redundant info."
+                    },
+                    {
+                      key: "podcast_style",
+                      icon: <Podcast className="w-4 h-4 text-indigo-600" />,
+                      labelVi: "Podcast Style",
+                      descVi: "Kịch bản đồng dẫn 2 MC đối thoại chia sẻ hóm hỉnh.",
+                      labelEn: "Podcast Style",
+                      descEn: "Two lively co-hosts conversing with witty banter."
+                    },
+                    {
+                      key: "morning_style",
+                      icon: <Flame className="w-4 h-4 text-amber-500 animate-pulse" />,
+                      labelVi: "Morning Vibes",
+                      descVi: "Năng lượng vui tươi chào buổi sáng & thời tiết nhẹ nhàng.",
+                      labelEn: "Morning Vibes",
+                      descEn: "Upbeat DJ show tone with warm greetings & weather."
+                    },
+                    {
+                      key: "driving_style",
+                      icon: <Clock className="w-4 h-4 text-blue-600" />,
+                      labelVi: "Safe Commuter",
+                      descVi: "Súc tích dễ nghe, cảnh báo an toàn & giữ tập trung.",
+                      labelEn: "Safe Commuter",
+                      descEn: "Concise spoken pacing with road safety reminders."
+                    },
+                    {
+                      key: "student_mode",
+                      icon: <BookOpen className="w-4 h-4 text-indigo-500" />,
+                      labelVi: "Educator Mode",
+                      descVi: "Giải nghĩa từ vựng chuyên ngành, khái niệm phức tạp.",
+                      labelEn: "Educator Mode",
+                      descEn: "Act as a mentor, unpacking scientific/academic terms."
+                    },
+                    {
+                      key: "executive_mode",
+                      icon: <Info className="w-4 h-4 text-slate-700" />,
+                      labelVi: "Macro Executive",
+                      descVi: "Cô đọng số liệu chính, tác động tài chính vĩ mô.",
+                      labelEn: "Macro Executive",
+                      descEn: "Highlight key metrics, market outcomes, and strategy."
+                    },
+                    {
+                      key: "english_learning_mode",
+                      icon: <Languages className="w-4 h-4 text-violet-600" />,
+                      labelVi: "English Corner",
+                      descVi: "Đính kèm phân tích 2-3 từ vựng học thuật sau mỗi tin.",
+                      labelEn: "Language Learner",
+                      descEn: "Pick 2-3 advanced vocabulary words to explain with examples."
+                    }
+                  ].map((mode) => {
+                    const isSelected = (preferences.aiMode || "rewrite") === mode.key;
+                    return (
+                      <button
+                        key={mode.key}
+                        type="button"
+                        onClick={() => updatePreferences({ aiMode: mode.key })}
+                        className={`p-3 rounded-xl border text-left transition-all hover:shadow-xs active:scale-[0.98] flex flex-col justify-between gap-1.5 h-full cursor-pointer relative ${
+                          isSelected
+                            ? "bg-white border-indigo-600 ring-2 ring-indigo-600/10 text-slate-950"
+                            : "bg-white/60 border-slate-200/80 text-slate-700 hover:border-slate-300 hover:bg-white"
+                        }`}
+                      >
+                        {isSelected && (
+                          <span className="absolute top-2 right-2 flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-600"></span>
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1.5">
+                          {mode.icon}
+                          <span className="text-xs font-black tracking-wide">
+                            {uiLanguage === "vi" ? mode.labelVi : mode.labelEn}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-normal leading-relaxed">
+                          {uiLanguage === "vi" ? mode.descVi : mode.descEn}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Target Duration slider */}
               <div>
                 <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
@@ -2077,8 +2298,8 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
 
         </section>
 
-        {/* Right Side: Active Player deck & historical playlists */}
-        <section className="md:col-span-5 flex flex-col gap-6" id="output-panel-desktop">
+        {/* Right Column: Active Player Desk (5 cols) */}
+        <section className="lg:col-span-5 flex flex-col gap-6" id="output-panel-desktop">
           
           {/* Pro AI Assistant Dashboard Tab Bar */}
           <div className="flex bg-bg-secondary p-1 rounded-2xl border border-border-primary" id="pro-ai-tabs">
@@ -2132,17 +2353,38 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
             <div className="flex flex-col gap-6 animate-fade-in">
               {/* Active status loaders */}
               {step === "summarizing" && (
-                <div className="bg-card-bg p-8 rounded-3xl border border-border-primary text-center shadow-lg flex flex-col items-center justify-center min-h-[310px]">
-                  <div className="relative mb-6">
-                    <div className="w-16 h-16 rounded-full border-4 border-cyan-500 border-t-transparent animate-spin" />
-                    <Settings2 className="w-6 h-6 text-cyan-500 absolute top-5 left-5 animate-pulse" />
+                <div className="bg-card-bg p-6 sm:p-8 rounded-3xl border border-border-primary shadow-lg flex flex-col gap-6 min-h-[310px] animate-fade-in">
+                  <div className="flex flex-col sm:flex-row items-center gap-4 border-b border-border-primary pb-4">
+                    <div className="relative shrink-0 mx-auto sm:mx-0">
+                      <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20">
+                        <Settings2 className="w-6 h-6 text-cyan-500 animate-spin" style={{ animationDuration: "3s" }} />
+                      </div>
+                    </div>
+                    <div className="text-center sm:text-left flex-1">
+                      <h3 className="text-base font-bold text-text-main">{t.draftingTitle}</h3>
+                      <p className="text-xs text-text-muted mt-0.5 max-w-xs leading-relaxed font-medium">
+                        {generationProgress}
+                      </p>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-bold text-text-main">{t.draftingTitle}</h3>
-                  <p className="text-xs text-text-muted mt-2.5 max-w-xs leading-relaxed mb-4">
-                    {generationProgress}
-                  </p>
+
+                  {/* Shimmering Chapter Skeletons */}
+                  <div className="space-y-3.5">
+                    {[1, 2, 3].map((idx) => (
+                      <div key={idx} className="p-3 bg-bg-secondary/40 border border-border-primary/60 rounded-xl flex items-start gap-3 animate-pulse" style={{ animationDelay: `${idx * 150}ms` }}>
+                        <div className="w-6 h-6 rounded-lg bg-slate-200 dark:bg-slate-800 shrink-0 flex items-center justify-center font-mono text-[10px] font-bold text-slate-400">
+                          0{idx}
+                        </div>
+                        <div className="flex-1 space-y-2 mt-1">
+                          <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded-md w-1/3" />
+                          <div className="h-2.5 bg-slate-150 dark:bg-slate-850 rounded-md w-full" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                   {targetNewsTitle && (
-                    <div className="w-full max-w-sm px-4 py-3 bg-bg-secondary border border-border-primary rounded-2xl text-left animate-fade-in">
+                    <div className="w-full px-4 py-3 bg-bg-secondary border border-border-primary rounded-2xl text-left animate-fade-in mt-auto">
                       <span className="text-[10px] font-black text-cyan-600 dark:text-cyan-400 uppercase tracking-widest block mb-1">
                         {uiLanguage === "vi" ? "ĐANG SOẠN THẢO BẢN TIN:" : "COMPILING ARTICLE:"}
                       </span>
@@ -2155,17 +2397,47 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
               )}
 
               {step === "synthesizing" && (
-                <div className="bg-card-bg p-8 rounded-3xl border border-border-primary text-center shadow-lg flex flex-col items-center justify-center min-h-[310px]">
-                  <div className="relative mb-6">
-                    <div className="w-16 h-16 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
-                    <Volume2 className="w-6 h-6 text-amber-500 absolute top-5 left-5 animate-bounce" />
+                <div className="bg-card-bg p-6 sm:p-8 rounded-3xl border border-border-primary shadow-lg flex flex-col gap-6 min-h-[310px] animate-fade-in">
+                  <div className="flex flex-col sm:flex-row items-center gap-4 border-b border-border-primary pb-4">
+                    <div className="relative shrink-0 mx-auto sm:mx-0">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+                        <Volume2 className="w-6 h-6 text-amber-500 animate-bounce" />
+                      </div>
+                    </div>
+                    <div className="text-center sm:text-left flex-1">
+                      <h3 className="text-base font-bold text-text-main">{t.synthesizingTitle}</h3>
+                      <p className="text-xs text-text-muted mt-0.5 max-w-xs leading-relaxed font-medium">
+                        {generationProgress}
+                      </p>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-bold text-text-main">{t.synthesizingTitle}</h3>
-                  <p className="text-xs text-text-muted mt-2.5 max-w-xs leading-relaxed mb-4">
-                    {generationProgress}
-                  </p>
+
+                  {/* Audio Waves Simulation Skeleton */}
+                  <div className="py-4 flex flex-col items-center justify-center gap-4 bg-bg-secondary/30 border border-border-primary/50 rounded-2xl">
+                    <div className="flex items-end justify-center gap-1.5 h-12 px-4">
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].map((i) => {
+                        const heights = [20, 36, 48, 24, 16, 40, 32, 44, 28, 48, 18, 38, 26, 44, 22, 34];
+                        const duration = [0.8, 1.1, 0.9, 1.3, 0.7, 1.2, 1.0, 1.4, 0.8, 1.1, 0.9, 1.3, 0.7, 1.2, 1.0, 1.4];
+                        return (
+                          <div
+                            key={i}
+                            className="w-1 rounded-full bg-gradient-to-t from-amber-500 to-amber-300 animate-pulse"
+                            style={{
+                              height: `${heights[i % 16]}px`,
+                              animationDuration: `${duration[i % 16]}s`,
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="w-2/3 space-y-2 px-6">
+                      <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full w-full animate-pulse" />
+                      <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full w-4/5 animate-pulse mx-auto" />
+                    </div>
+                  </div>
+
                   {(activeTitle || targetNewsTitle) && (
-                    <div className="w-full max-w-sm px-4 py-3 bg-bg-secondary border border-border-primary rounded-2xl text-left animate-fade-in">
+                    <div className="w-full px-4 py-3 bg-bg-secondary border border-border-primary rounded-2xl text-left animate-fade-in mt-auto">
                       <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest block mb-1">
                         {uiLanguage === "vi" ? "TIÊU ĐỀ BẢN TIN PHÁT THANH:" : "AUDIO BRIEFING TITLE:"}
                       </span>
@@ -2472,8 +2744,527 @@ const handleGenerateBriefing = async (contentOverride?: string) => {
           )}
 
         </section>
+      </div>
+    )}
+
+          {/* TAB 2: RSS CHANNELS */}
+          {activeTab === "rss" && (
+            <div className="max-w-4xl mx-auto flex flex-col gap-6 animate-fade-in">
+              <RSSManager
+                uiLanguage={uiLanguage}
+                getApiUrl={getApiUrl}
+                onGenerateFromRSS={(content) => {
+                  setIsRssBasedGeneration(true);
+                  handleGenerateBriefing(content);
+                  setActiveTab("dashboard"); // Smart transition back to desk for live player update
+                }}
+                isGenerating={step === "summarizing" || step === "synthesizing"}
+                onAddToDraft={(text) => {
+                  setNewsContent(prev => prev ? prev + "\n\n" + text : text);
+                  setActiveTab("dashboard"); // Navigate back to text editor draft
+                }}
+              />
+            </div>
+          )}
+
+          {/* TAB 3: SMART PLAY QUEUE */}
+          {activeTab === "queue" && (
+            <div className="max-w-4xl mx-auto flex flex-col gap-6 animate-fade-in" id="queue-tab-panel">
+              <SmartQueue
+                onSelectItem={(item) => {
+                  handleApplyHistoryBriefing(item);
+                  setActiveTab("dashboard"); // Auto redirect to main active player
+                }}
+                activeItemId={selectedBriefId}
+                uiLanguage={uiLanguage}
+              />
+            </div>
+          )}
+
+          {/* TAB 4: HISTORIC ARCHIVE & PERSONAL MEMORY */}
+          {activeTab === "memory" && (
+            <div className="max-w-4xl mx-auto flex flex-col gap-6 animate-fade-in">
+              
+              {/* Real-time Storage stats warning and usage meters */}
+              <StorageStats
+                usedMB={storageUsage.usedMB}
+                totalItems={savedBriefings.length}
+                onClearAll={clearAllBriefings}
+                uiLanguage={uiLanguage}
+              />
+
+              {/* Local commute playlist drive list & Podcast tab container */}
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-4 text-left">
+                <div className="flex justify-between items-center border-b border-slate-150 dark:border-slate-800 pb-2.5">
+                  <div className="flex gap-4">
+                    <button
+                      onClick={() => setActiveHistoryTab("history")}
+                      className={`pb-2 text-xs sm:text-sm font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                        activeHistoryTab === "history"
+                          ? "border-cyan-600 text-cyan-700 dark:text-cyan-400"
+                          : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                      }`}
+                    >
+                      <History className="w-4 h-4" />
+                      <span>{uiLanguage === "vi" ? "Lịch sử bản tin" : "Briefing History"}</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveHistoryTab("podcast")}
+                      className={`pb-2 text-xs sm:text-sm font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                        activeHistoryTab === "podcast"
+                          ? "border-cyan-600 text-cyan-700 dark:text-cyan-400"
+                          : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                      }`}
+                    >
+                      <Podcast className="w-4 h-4" />
+                      <span>{uiLanguage === "vi" ? "Đăng tải Podcast" : "Podcast Publish"}</span>
+                    </button>
+                  </div>
+
+                  {activeHistoryTab === "history" && (
+                    <div className="hidden sm:flex items-center gap-1.5 font-mono text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-950 px-2.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-800">
+                      <span>
+                        {uiLanguage === "vi" 
+                          ? `Bản tin: ${savedBriefings.length}` 
+                          : `Briefings: ${savedBriefings.length}`}
+                      </span>
+                      <span>•</span>
+                      <span>
+                        {uiLanguage === "vi" 
+                          ? `Đã dùng: ${storageUsage.usedMB.toFixed(1)}MB` 
+                          : `Used: ${storageUsage.usedMB.toFixed(1)}MB`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {activeHistoryTab === "history" ? (
+                  savedBriefings.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 dark:text-slate-500 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50/50 dark:bg-slate-950/20">
+                      <p className="text-xs font-bold text-slate-500">{t.historyEmpty}</p>
+                      <p className="text-[10px] text-slate-400 mt-1">{t.historyEmptySub}</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2.5 max-h-[380px] overflow-y-auto pr-1">
+                      {savedBriefings.map((item) => {
+                        const itemLanguage = item.preferences.language || "bilingual";
+                        
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => {
+                              handleApplyHistoryBriefing(item);
+                              setActiveTab("dashboard"); // Return to dash for instant listening
+                            }}
+                            className="p-3.5 bg-slate-50/60 dark:bg-slate-950/40 hover:bg-slate-50 dark:hover:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl transition cursor-pointer flex justify-between items-start gap-4 group text-left animate-fade-in"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/80 text-cyan-750 dark:text-cyan-400 uppercase">
+                                  {itemLanguage}
+                                </span>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 capitalize">
+                                  {item.preferences.targetDuration}
+                                </span>
+                              </div>
+                              <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                {item.payload.title}
+                              </h4>
+                              <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1.5 font-mono">
+                                <span>🕒 {item.timestamp}</span>
+                              </p>
+                              <div className="flex items-center gap-2 mt-2">
+                                {/* Like Button */}
+                                <button
+                                  type="button"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await incrementBriefingLikes(item.id);
+                                    refreshBriefings(false);
+                                    // Ghi nhận tương tác like cho từng chủ đề trong chương
+                                    item.payload?.chapters?.forEach((ch: any) => {
+                                      if (ch.topic) {
+                                        recordInteraction(ch.topic, "like", ch.id || item.id).catch((err) =>
+                                          console.error("Failed to record like interaction:", err)
+                                        );
+                                      }
+                                    });
+                                  }}
+                                  className="text-[10px] text-slate-550 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 font-bold bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-800 transition-all flex items-center gap-1 cursor-pointer"
+                                  title={uiLanguage === "vi" ? "Thích bản tin" : "Like briefing"}
+                                >
+                                  <ThumbsUp className="w-2.5 h-2.5" />
+                                  <span>{item.likeCount || 0}</span>
+                                </button>
+
+                                {/* Share Button */}
+                                <ShareButton
+                                  briefingId={item.id}
+                                  uiLanguage={uiLanguage}
+                                  onShareSuccess={() => {
+                                    refreshBriefings(false);
+                                    // Ghi nhận tương tác share cho từng chủ đề trong chương
+                                    item.payload?.chapters?.forEach((ch: any) => {
+                                      if (ch.topic) {
+                                        recordInteraction(ch.topic, "share", ch.id || item.id).catch((err) =>
+                                          console.error("Failed to record share interaction:", err)
+                                        );
+                                      }
+                                    });
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addToQueue({
+                                    id: item.id,
+                                    title: item.payload?.title || "Bản tin không tên",
+                                    subtitle: new Date(item.timestamp).toLocaleDateString(),
+                                    duration: item.payload?.chapters?.reduce((acc: any, ch: any) => acc + (ch.scriptText?.length || 0) * 0.08, 60) || 60,
+                                    type: "podcast"
+                                  });
+                                  // Soft notification
+                                  alert(uiLanguage === "vi" ? "Đã thêm vào hàng đợi nghe!" : "Added to smart play queue!");
+                                }}
+                                className="p-1.5 bg-slate-100 hover:bg-cyan-50 dark:bg-slate-850 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-cyan-600 rounded-lg border border-slate-200 dark:border-slate-800 transition cursor-pointer flex items-center justify-center gap-1.5 text-[10px] font-bold"
+                                title={uiLanguage === "vi" ? "Thêm vào hàng đợi" : "Enqueue briefing"}
+                              >
+                                <ListPlus className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm(uiLanguage === "vi" ? "Bạn muốn xóa bản tin này khỏi lịch sử?" : "Delete this compiled briefing?")) {
+                                    deleteOneBriefing(item.id).then(() => refreshBriefings(false));
+                                  }
+                                }}
+                                className="p-1.5 bg-slate-100 hover:bg-rose-50 dark:bg-slate-850 dark:hover:bg-rose-950/20 text-slate-600 dark:text-slate-400 hover:text-rose-600 rounded-lg border border-slate-200 dark:border-slate-800 transition cursor-pointer flex items-center justify-center"
+                                title={uiLanguage === "vi" ? "Xóa bản tin" : "Delete briefing"}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : (
+                  <PodcastManager
+                    savedBriefings={savedBriefings}
+                    podcastEpisodes={podcastEpisodes}
+                    isPublishingPodcast={isPublishingPodcast}
+                    podcastError={podcastError}
+                    onPublishPodcast={handlePublishPodcast}
+                    onDeletePodcastEpisode={handleDeletePodcastEpisode}
+                    uiLanguage={uiLanguage}
+                    isAutoPublish={isAutoPublish}
+                    setIsAutoPublish={setIsAutoPublish}
+                    selectedBriefId={selectedBriefId}
+                    setSelectedBriefId={setSelectedBriefId}
+                  />
+                )}
+              </div>
+
+              {/* Personal memory details */}
+              <PersonalMemory uiLanguage={uiLanguage} />
+            </div>
+          )}
+
+          {/* TAB 5: STATISTICS */}
+          {activeTab === "stats" && (
+            <div className="max-w-4xl mx-auto flex flex-col gap-6 animate-fade-in" id="stats-tab-panel">
+              <ReadingStatistics uiLanguage={uiLanguage} />
+              
+              <DownloadManager
+                savedBriefings={savedBriefings}
+                onDeleteBriefing={(id) => deleteOneBriefing(id).then(() => refreshBriefings(false))}
+                onClearAll={clearAllBriefings}
+                uiLanguage={uiLanguage}
+              />
+            </div>
+          )}
+
+          {/* TAB 6: PREFERENCES & SYSTEM CONTROLS */}
+          {activeTab === "settings" && (
+            <div className="max-w-4xl mx-auto flex flex-col gap-6 animate-fade-in" id="settings-tab-panel">
+              
+              {/* Preferences Settings Form */}
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden text-left">
+                <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500" />
+                
+                <h2 className="text-base font-bold text-white bg-slate-900 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-800 mb-6 shadow-sm">
+                  <Settings2 className="w-4 h-4 text-amber-400" />
+                  <span>{t.step2Title}</span>
+                </h2>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-left">
+                  
+                  {/* Broadcast output language selector - CRITICAL FOR BILINGUAL ASSIGNMENT */}
+                  <div className="md:col-span-2 bg-gradient-to-r from-cyan-50/10 to-amber-50/5 dark:from-slate-950 dark:to-slate-900 p-4 border border-cyan-150 dark:border-slate-800 rounded-xl relative overflow-hidden">
+                    <div className="absolute top-2 right-2 opacity-10">
+                       <Languages className="w-16 h-16 text-cyan-900 dark:text-cyan-600" />
+                    </div>
+                    <label className="text-xs font-bold text-cyan-950 dark:text-cyan-400 uppercase tracking-widest block mb-2">
+                      {t.labelLanguage}
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updatePreferences({ languageMode: "BILINGUAL" });
+                        }}
+                        className={`py-3 px-3.5 text-xs font-bold rounded-lg border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
+                          preferences.languageMode === "BILINGUAL"
+                            ? "bg-amber-300 dark:bg-amber-400 text-black border-amber-400 shadow-md transform scale-[1.01]"
+                            : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-750"
+                        }`}
+                      >
+                        <span className="text-sm">🗣️ EN ⇄ VI</span>
+                        <span>{t.langBilingual}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updatePreferences({ languageMode: "VN_ONLY" });
+                        }}
+                        className={`py-3 px-3.5 text-xs font-bold rounded-lg border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
+                          preferences.languageMode === "VN_ONLY"
+                            ? "bg-cyan-200 dark:bg-cyan-300 text-black border-cyan-300 shadow-md transform scale-[1.01]"
+                            : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-750"
+                        }`}
+                      >
+                        <span className="text-sm">🇻🇳 VI</span>
+                        <span>{t.langVi}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updatePreferences({ languageMode: "EN_ONLY" });
+                        }}
+                        className={`py-3 px-3.5 text-xs font-bold rounded-lg border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
+                          preferences.languageMode === "EN_ONLY"
+                            ? "bg-cyan-600 text-white border-cyan-600 shadow-md shadow-cyan-600/25 transform scale-[1.01]"
+                            : "bg-cyan-50/60 dark:bg-slate-950 text-cyan-900 dark:text-cyan-400 border-cyan-200 dark:border-slate-800 hover:bg-cyan-200 dark:hover:bg-cyan-900 hover:text-cyan-950 hover:border-cyan-300"
+                        }`}
+                      >
+                        <span className="text-sm">🇺🇸 EN</span>
+                        <span>{t.langEn}</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-2.5 font-medium leading-relaxed">
+                      {preferences.languageMode === "BILINGUAL" && t.langDescBilingual}
+                      {preferences.languageMode === "VN_ONLY" && t.langDescVi}
+                      {preferences.languageMode === "EN_ONLY" && t.langDescEn}
+                    </p>
+                  </div>
+
+                  {/* Target Duration slider */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {t.labelDuration}
+                    </label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-850">
+                      {[
+                        { key: "short", label: t.durShort },
+                        { key: "medium", label: t.durMedium },
+                        { key: "long", label: t.durLong }
+                      ].map((dur) => (
+                        <button
+                          key={dur.key}
+                          type="button"
+                          onClick={() => updatePreferences({ targetDuration: dur.key as any })}
+                          className={`py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                            preferences.targetDuration === dur.key 
+                              ? "bg-white dark:bg-slate-850 text-slate-900 dark:text-slate-100 shadow-sm font-bold" 
+                              : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+                          }`}
+                        >
+                          {dur.label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 block mt-1">
+                      {preferences.targetDuration === "short" && t.durDescShort}
+                      {preferences.targetDuration === "medium" && t.durDescMedium}
+                      {preferences.targetDuration === "long" && t.durDescLong}
+                    </span>
+                  </div>
+
+                  {/* Transit commute type */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {t.labelCommute}
+                    </label>
+                    <select
+                      value={preferences.commuteType}
+                      onChange={(e) => updatePreferences({ commuteType: e.target.value as any })}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none text-slate-900 dark:text-slate-100 cursor-pointer"
+                    >
+                      <option value="driving">{t.commuteDriving}</option>
+                      <option value="transit">{t.commuteTransit}</option>
+                      <option value="walking">{t.commuteWalking}</option>
+                      <option value="cycling">{t.commuteCycling}</option>
+                    </select>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 block mt-1">
+                      {t.commuteDesc}
+                    </span>
+                  </div>
+
+                  {/* Spoken Tone style */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {t.labelTone}
+                    </label>
+                    <select
+                      value={preferences.tone}
+                      onChange={(e) => updatePreferences({ tone: e.target.value as any })}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none text-slate-900 dark:text-slate-100 cursor-pointer"
+                    >
+                      <option value="conversational">{t.toneConversational}</option>
+                      <option value="informative">{t.toneInformative}</option>
+                      <option value="upbeat">{t.toneUpbeat}</option>
+                      <option value="analytical">{t.toneAnalytical}</option>
+                      <option value="witty">{t.toneWitty}</option>
+                    </select>
+                  </div>
+
+                  {/* TTS Vocoder voice */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {t.labelVoice}
+                    </label>
+                    <select
+                      value={preferences.voice}
+                      onChange={(e) => {
+                        const nextVoice = e.target.value as any;
+                        updatePreferences({ voice: nextVoice });
+                      }}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none font-medium cursor-pointer text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="vi-HN">🇻🇳 {uiLanguage === "vi" ? "Việt Nam (Giọng Hà Nội - Nữ)" : "Vietnam (Hanoi Accent - Female)"}</option>
+                      <option value="vi-HCM">🇻🇳 {uiLanguage === "vi" ? "Việt Nam (Giọng TP. HCM - Nữ/Nam)" : "Vietnam (HCM Accent - Friendly)"}</option>
+                      <option value="en-UK">🇬🇧 {uiLanguage === "vi" ? "UK (United Kingdom): Giọng Anh - Anh (chuẩn RP)" : "UK (United Kingdom): British Accent (RP Standard)"}</option>
+                      <option value="en-US">🇺🇸 {uiLanguage === "vi" ? "US (United States): Giọng Anh - Mỹ (chuẩn GA)" : "US (United States): American Accent (GA Standard)"}</option>
+                      <option value="Kore">Kore {uiLanguage === "vi" ? "(Giọng Nữ Anh chuẩn)" : "(Clear, Professional Female)"}</option>
+                      <option value="Puck">Puck {uiLanguage === "vi" ? "(Giọng Nam Anh ấm áp)" : "(Aesthetic, Warm Narrative Male)"}</option>
+                      <option value="Charon">Charon {uiLanguage === "vi" ? "(Giọng Nam trầm trang trọng)" : "(Declaimed deep baritone)"}</option>
+                      <option value="Fenrir">Fenrir {uiLanguage === "vi" ? "(Giọng trung tính tiêu chuẩn)" : "(Steady Standard Neutral)"}</option>
+                      <option value="Zephyr">Zephyr {uiLanguage === "vi" ? "(Giọng dẫn chương trình sôi động)" : "(Bright, Engaging Host)"}</option>
+                    </select>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 block mt-1">
+                      {t.voiceSub}
+                    </span>
+                  </div>
+
+                  {/* Default Reading Speed */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      ⚡ {uiLanguage === "vi" ? "Tốc Độ Đọc Mặc Định" : "Default Read Speed"}
+                    </label>
+                    <div className="grid grid-cols-6 gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-850">
+                      {([0.8, 0.9, 1.0, 1.1, 1.2, 1.3] as const).map((spd) => (
+                        <button
+                          key={spd}
+                          type="button"
+                          onClick={() => updateSpeed(spd)}
+                          className={`py-1.5 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
+                            userPref.speed === spd
+                              ? "bg-white dark:bg-slate-850 text-slate-900 dark:text-slate-100 shadow-xs border border-slate-200 dark:border-slate-700 font-black scale-105"
+                              : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+                          }`}
+                        >
+                          {spd}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 block mt-1">
+                      {uiLanguage === "vi" 
+                        ? "Tốc độ đọc ưa thích của bạn được lưu và áp dụng tự động" 
+                        : "Your preferred speed is persisted and set automatically"}
+                    </span>
+                  </div>
+
+                  {/* Weather Location input */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {(t as any).labelLocationName}
+                    </label>
+                    <input
+                      type="text"
+                      value={preferences.locationName || ""}
+                      onChange={(e) => updatePreferences({ locationName: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900 dark:text-slate-100"
+                      placeholder={(t as any).placeholderLocationName}
+                    />
+                  </div>
+
+                  {/* Commute Route input */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {(t as any).labelCommuteRoute}
+                    </label>
+                    <input
+                      type="text"
+                      value={preferences.commuteRoute || ""}
+                      onChange={(e) => updatePreferences({ commuteRoute: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900 dark:text-slate-100"
+                      placeholder={(t as any).placeholderCommuteRoute}
+                    />
+                  </div>
+
+                  {/* Special focus area */}
+                  <div className="md:col-span-2">
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {t.labelFocus}
+                    </label>
+                    <input
+                      type="text"
+                      value={preferences.focus}
+                      onChange={(e) => updatePreferences({ focus: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900 dark:text-slate-100"
+                      placeholder={t.placeholderFocus}
+                    />
+                  </div>
+
+                  {/* Custom special directives */}
+                  <div className="md:col-span-2">
+                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
+                      {t.labelSpecial}
+                    </label>
+                    <input
+                      type="text"
+                      value={preferences.customInstructions}
+                      onChange={(e) => updatePreferences({ customInstructions: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs px-3 py-2 rounded-xl focus:ring-2 focus:ring-cyan-500/20 outline-none placeholder:text-slate-400 text-slate-900 dark:text-slate-100"
+                      placeholder={t.placeholderSpecial}
+                    />
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Core Control Center Settings Panel */}
+              <SettingsCenter
+                uiLanguage={uiLanguage}
+                onClearAllCache={clearAllBriefings}
+              />
+              
+              <PwaStatus />
+            </div>
+          )}
 
       </main>
+    </div>
 
       {/* Decorative footer */}
       <footer className="bg-white border-t border-slate-200 py-8 mt-12 text-slate-500">

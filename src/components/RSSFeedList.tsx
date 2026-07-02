@@ -45,6 +45,7 @@ export default function RSSFeedList({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [selectedType, setSelectedType] = useState<string>("All");
+  const [hideDuplicates, setHideDuplicates] = useState(true);
 
   const t = {
     searchPlaceholder: uiLanguage === "vi" ? "Tìm kiếm bài viết..." : "Search articles...",
@@ -76,7 +77,7 @@ export default function RSSFeedList({
     return ["All", ...Array.from(list)];
   }, [articles]);
 
-  // Filter articles based on search term, category, and feedType
+  // Filter articles based on search term, category, feedType, and duplicates
   const filteredArticles = useMemo(() => {
     return articles.filter(art => {
       const matchSearch = 
@@ -88,9 +89,11 @@ export default function RSSFeedList({
       
       const matchType = selectedType === "All" || art.feedType === selectedType;
 
-      return matchSearch && matchCategory && matchType;
+      const matchDuplicate = !hideDuplicates || !art.isDuplicate;
+
+      return matchSearch && matchCategory && matchType && matchDuplicate;
     });
-  }, [articles, searchTerm, selectedCategory, selectedType]);
+  }, [articles, searchTerm, selectedCategory, selectedType, hideDuplicates]);
 
   const isAllFilteredSelected = useMemo(() => {
     if (filteredArticles.length === 0) return false;
@@ -228,6 +231,30 @@ export default function RSSFeedList({
             <option value="blog">{t.blog}</option>
           </select>
         </div>
+      </div>
+
+      {/* Duplicate Detection Toggle Options */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50/50 dark:bg-slate-900/10 border border-slate-100 dark:border-slate-800 rounded-xl text-[11px] text-slate-500">
+        <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={hideDuplicates}
+            onChange={(e) => setHideDuplicates(e.target.checked)}
+            className="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 h-4 w-4 cursor-pointer"
+          />
+          <span className="font-semibold text-slate-600 dark:text-slate-300">
+            {uiLanguage === "vi" ? "Lọc & Ẩn bài viết trùng lặp (Deep Duplicate Detection)" : "Filter & Hide Duplicate Articles"}
+          </span>
+        </label>
+        
+        {articles.some(a => a.isDuplicate) && (
+          <span className="text-[10px] font-bold px-2.5 py-1 bg-amber-500/10 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-200/30 dark:border-amber-900/30 rounded-full flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping inline-block"></span>
+            {uiLanguage === "vi" 
+              ? `Phát hiện ${articles.filter(a => a.isDuplicate).length} tin trùng lặp` 
+              : `Detected ${articles.filter(a => a.isDuplicate).length} duplicate articles`}
+          </span>
+        )}
       </div>
 
       {/* Floating / Contextual Action Bar when articles are selected */}

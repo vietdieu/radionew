@@ -94,8 +94,21 @@ export default function ManualPcmPlayer({
   briefingId,
   onEnded
 }: ManualPcmPlayerProps) {
-  const { preferences: userPref, updateDrivingMode } = useUserPreferences();
+  const { preferences: userPref, updateDrivingMode, updatePreferences } = useUserPreferences();
   
+  // Local active tab for Audio Studio
+  const [activeStudioTab, setActiveStudioTab] = useState<"mixer" | "music" | "lexicon">("mixer");
+
+  // Local state for adding pronunciation entry
+  const [newWord, setNewWord] = useState("");
+  const [newReplace, setNewReplace] = useState("");
+
+  // Local state for Voice Preview
+  const [previewText, setPreviewText] = useState("");
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const getDefaultLanguage = (): "vi" | "en" => {
     if (propUiLanguage === "vi" || propUiLanguage === "en") return propUiLanguage;
     if (userPref?.language === "vi" || userPref?.language === "en") return userPref.language;
@@ -115,6 +128,16 @@ export default function ManualPcmPlayer({
       setUiLanguage(userPref.language);
     }
   }, [userPref?.language]);
+
+  useEffect(() => {
+    if (!previewText) {
+      setPreviewText(
+        uiLanguage === "vi" 
+          ? "Chào buổi sáng, chúc bạn một ngày lái xe an toàn!" 
+          : "Good morning! Wishing you an incredibly safe commute today!"
+      );
+    }
+  }, [uiLanguage]);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -172,6 +195,132 @@ export default function ManualPcmPlayer({
     })),
     { type: "outro", title: "Signing Off", text: payload.conclusion, bullets: [] as string[] }
   ];
+
+  const getTimelineSegments = () => {
+    if (!payload) return [];
+    
+    const introText = payload.introduction || "";
+    const chapterTexts = payload.chapters?.map(c => c.scriptText || "") || [];
+    const outroText = payload.conclusion || "";
+    
+    const introLen = introText.length;
+    const chapLens = chapterTexts.map(t => t.length);
+    const outroLen = outroText.length;
+    
+    const totalChars = introLen + chapLens.reduce((a, b) => a + b, 0) + outroLen;
+    if (totalChars === 0) return [];
+    
+    const totalDur = totalDuration || 120; // fallback to 120s if not loaded yet
+    
+    const segments: Array<{ label: string; start: number; end: number; startPct: number; endPct: number }> = [];
+    let currentPct = 0;
+    
+    // Intro
+    const introPct = (introLen / totalChars) * 100;
+    segments.push({
+      label: uiLanguage === "vi" ? "Lời chào" : "Intro",
+      start: (currentPct / 100) * totalDur,
+      end: ((currentPct + introPct) / 100) * totalDur,
+      startPct: currentPct,
+      endPct: currentPct + introPct
+    });
+    currentPct += introPct;
+    
+    // Chapters
+    payload.chapters?.forEach((chap, idx) => {
+      const chapPct = (chapLens[idx] / totalChars) * 100;
+      segments.push({
+        label: chap.topic || `${uiLanguage === "vi" ? "Chương" : "Chapter"} ${idx + 1}`,
+        start: (currentPct / 100) * totalDur,
+        end: ((currentPct + chapPct) / 100) * totalDur,
+        startPct: currentPct,
+        endPct: currentPct + chapPct
+      });
+      currentPct += chapPct;
+    });
+    
+    // Outro
+    const outroPct = (outroLen / totalChars) * 100;
+    segments.push({
+      label: uiLanguage === "vi" ? "Kết bài" : "Outro",
+      start: (currentPct / 100) * totalDur,
+      end: ((currentPct + outroPct) / 100) * totalDur,
+      startPct: currentPct,
+      endPct: currentPct + outroPct
+    });
+    
+    return segments;
+  };
+
+  const handleAddPronunciation = () => {
+    if (!newWord.trim() || !newReplace.trim()) return;
+    const currentDict = userPref.audioPronunciationDict || [];
+    if (currentDict.some(e => e.word.toLowerCase() === newWord.trim().toLowerCase())) {
+      return;
+    }
+    const updated = [...currentDict, { word: newWord.trim(), replace: newReplace.trim() }];
+    updatePreferences({ audioPronunciationDict: updated });
+    setNewWord("");
+    setNewReplace("");
+  };
+
+  const handleRemovePronunciation = (word: string) => {
+    const currentDict = userPref.audioPronunciationDict || [];
+    const updated = currentDict.filter(e => e.word !== word);
+    updatePreferences({ audioPronunciationDict: updated });
+  };
+
+  const handlePlayVoicePreview = async () => {
+    if (!previewText.trim()) return;
+    setIsPreviewing(true);
+    setPreviewError("");
+    try {
+      let processedPreview = previewText;
+      const dict = userPref.audioPronunciationDict || [];
+      const sortedDict = [...dict].sort((a, b) => b.word.length - a.word.length);
+      for (const entry of sortedDict) {
+        if (!entry.word.trim()) continue;
+        const escaped = entry.word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+        processedPreview = processedPreview.replace(regex, entry.replace);
+      }
+
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: processedPreview,
+          voice: userPref.voice,
+          tone: userPref.tone,
+          emotion: userPref.audioEmotion
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(uiLanguage === "vi" ? "Lỗi tổng hợp bản xem trước." : "Synthesis preview error.");
+      }
+
+      const data = await res.json();
+      if (!data.base64Audio) {
+        throw new Error("No base64 audio data");
+      }
+
+      const audioSrc = `data:audio/mp3;base64,${data.base64Audio}`;
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+      const audio = new Audio(audioSrc);
+      previewAudioRef.current = audio;
+      audio.play();
+      audio.onended = () => {
+        setIsPreviewing(false);
+      };
+    } catch (err: any) {
+      console.error(err);
+      setPreviewError(err.message || "Failed to preview");
+      setIsPreviewing(false);
+    }
+  };
 
 // Initialize audio buffer
 useEffect(() => {
@@ -294,7 +443,7 @@ useEffect(() => {
 
       const sampleRate = decodedBuffers[0].sampleRate;
       const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-      const pauseSamples = Math.round(sampleRate * 0.25); // 0.25s pause cho tự nhiên
+      const pauseSamples = Math.round(sampleRate * (userPref.audioPauseDuration ?? 0.25)); // Đọc cấu hình khoảng lặng từ Audio Studio
       console.log(`[ManualPcmPlayer] Pause samples: ${pauseSamples}, pause duration: ${(pauseSamples / sampleRate).toFixed(2)}s`);
       
       let totalSamples = 0;
@@ -349,8 +498,15 @@ useEffect(() => {
   return () => {
     active = false;
     stopAudio();
+    if (audioCtxRef.current) {
+      const ctx = audioCtxRef.current;
+      if (ctx.state !== "closed") {
+        ctx.close().catch(err => console.log("[ManualPcmPlayer] Error closing AudioContext:", err));
+      }
+      audioCtxRef.current = null;
+    }
   };
-}, [audioChunks]);
+}, [audioChunks, userPref.audioPauseDuration]);
 
   // ===== FIX: Cải thiện playAudio với timing chính xác =====
   const playAudio = (offset: number) => {
@@ -375,13 +531,48 @@ useEffect(() => {
     analyser.smoothingTimeConstant = 0.75;
     analyserRef.current = analyser;
 
-    const gainNode = audioCtx.createGain();
-    gainNode.gain.value = volume;
-    gainNodeRef.current = gainNode;
+    let lastNode: AudioNode = source;
 
-    source.connect(analyser);
+    // 1. Áp dụng Bộ lọc Giảm nhiễu (Noise Reduction)
+    if (userPref.audioNoiseReduction) {
+      const hpFilter = audioCtx.createBiquadFilter();
+      hpFilter.type = "highpass";
+      hpFilter.frequency.value = 85; // Cắt âm trầm ù nền nhiễu thiết bị
+
+      const lpFilter = audioCtx.createBiquadFilter();
+      lpFilter.type = "lowpass";
+      lpFilter.frequency.value = 7500; // Cắt nhiễu xè rít tần số cao
+
+      lastNode.connect(hpFilter);
+      hpFilter.connect(lpFilter);
+      lastNode = lpFilter;
+    }
+
+    // Kết nối đến Analyser vẽ phổ tần
+    lastNode.connect(analyser);
+
+    // 2. Chuẩn hóa âm lượng giọng nói (Normalize: Tự động nâng dải âm)
+    const normVolume = userPref.audioNormalize ? volume * 1.35 : volume;
+
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = normVolume;
+    gainNodeRef.current = gainNode;
     analyser.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
+
+    // 3. Bộ giới hạn biên độ chống rè (Limiter)
+    if (userPref.audioLimiter) {
+      const limiter = audioCtx.createDynamicsCompressor();
+      limiter.threshold.setValueAtTime(-1.5, audioCtx.currentTime);
+      limiter.knee.setValueAtTime(0, audioCtx.currentTime);
+      limiter.ratio.setValueAtTime(20, audioCtx.currentTime);
+      limiter.attack.setValueAtTime(0.003, audioCtx.currentTime);
+      limiter.release.setValueAtTime(0.08, audioCtx.currentTime);
+
+      gainNode.connect(limiter);
+      limiter.connect(audioCtx.destination);
+    } else {
+      gainNode.connect(audioCtx.destination);
+    }
 
     const safeOffset = Math.max(0, Math.min(offset, totalDuration));
     
@@ -511,34 +702,60 @@ useEffect(() => {
 
   const startBgMusic = () => {
     if (!audioCtxRef.current || !isBgMusicEnabled) return;
+    const genre = userPref.audioMusicGenre ?? "lofi";
+    if (genre === "none") return;
+
     try {
       stopBgMusic();
       const now = audioCtxRef.current.currentTime;
 
       const masterGain = audioCtxRef.current.createGain();
-      masterGain.gain.setValueAtTime(bgMusicVolume * volume * 0.06, now);
+      // Bắt đầu từ 0 để fade-in mượt mà
+      masterGain.gain.setValueAtTime(0, now);
+      const targetVol = (userPref.audioMusicVolume ?? bgMusicVolume) * volume * 0.08;
+      const fadeDur = userPref.audioFadeDuration ?? 1.5;
+      masterGain.gain.linearRampToValueAtTime(targetVol, now + fadeDur);
+      
       masterGain.connect(audioCtxRef.current.destination);
       bgGainRef.current = masterGain;
 
-      const baseFreqs = [261.63, 293.66, 329.63, 392.00];
+      // Chọn hợp âm & loại sóng dựa trên thể loại nhạc
+      let baseFreqs = [130.81, 164.81, 196.00, 246.94]; // Mặc định: Lofi (Cmaj7)
+      let type: OscillatorType = "sine";
+      let detuneMultiplier = 1;
+
+      if (genre === "acoustic") {
+        baseFreqs = [261.63, 329.63, 392.00, 523.25]; // C Major
+        type = "triangle";
+        detuneMultiplier = 0.5;
+      } else if (genre === "synthwave") {
+        baseFreqs = [110.00, 165.00, 220.00, 330.00]; // Am pulse style
+        type = "sawtooth";
+        detuneMultiplier = 2.5;
+      } else if (genre === "classical") {
+        baseFreqs = [196.00, 293.66, 349.23, 440.00]; // G7 classical style
+        type = "sine";
+        detuneMultiplier = 0.2;
+      }
+
       const oscs: OscillatorNode[] = [];
 
       baseFreqs.forEach((freq, idx) => {
         const osc = audioCtxRef.current!.createOscillator();
-        osc.type = idx % 2 === 0 ? "sine" : "triangle";
-        const detune = (idx % 3) * 0.7 - 0.7;
+        osc.type = type;
+        const detune = ((idx % 3) * 0.7 - 0.7) * detuneMultiplier;
         osc.frequency.setValueAtTime(freq + detune, now);
         osc.detune.setValueAtTime(detune * 2, now);
 
         const gain = audioCtxRef.current!.createGain();
-        const vol = 0.03 + (idx * 0.008);
+        const vol = 0.025 + (idx * 0.005);
         gain.gain.setValueAtTime(vol, now);
-        gain.gain.linearRampToValueAtTime(vol * 0.7, now + 1.5);
+        gain.gain.linearRampToValueAtTime(vol * 0.6, now + 2.5);
 
         osc.connect(gain);
         gain.connect(masterGain);
 
-        osc.start(now + idx * 0.15);
+        osc.start(now + idx * 0.18);
         oscs.push(osc);
       });
 
@@ -549,6 +766,32 @@ useEffect(() => {
   };
 
   const stopBgMusic = () => {
+    if (bgGainRef.current && audioCtxRef.current) {
+      try {
+        const now = audioCtxRef.current.currentTime;
+        const fadeDur = userPref.audioFadeDuration ?? 1.5;
+        const currentGain = bgGainRef.current.gain;
+        currentGain.cancelScheduledValues(now);
+        currentGain.setValueAtTime(currentGain.value, now);
+        currentGain.linearRampToValueAtTime(0, now + fadeDur);
+        
+        const oscs = bgOscsRef.current;
+        const gainNode = bgGainRef.current;
+        setTimeout(() => {
+          oscs.forEach(osc => {
+            try { osc.stop(); osc.disconnect(); } catch(e){}
+          });
+          try { gainNode.disconnect(); } catch(e){}
+        }, fadeDur * 1000 + 100);
+        
+        bgOscsRef.current = [];
+        bgGainRef.current = null;
+        return;
+      } catch (e) {
+        console.warn("Failed to stop bg music with fade:", e);
+      }
+    }
+
     if (bgOscsRef.current.length > 0) {
       bgOscsRef.current.forEach((osc) => {
         try {
@@ -617,6 +860,11 @@ useEffect(() => {
     const handleTogglePlayEvent = () => {
       handlePlayPause();
     };
+    const handlePauseEvent = () => {
+      if (isPlaying) {
+        handlePlayPause();
+      }
+    };
     const handleSeekEvent = (e: Event) => {
       const direction = (e as CustomEvent).detail?.direction;
       if (direction === "forward") {
@@ -650,10 +898,12 @@ useEffect(() => {
     };
 
     window.addEventListener("commutecast-toggle-play", handleTogglePlayEvent);
+    window.addEventListener("commutecast-pause", handlePauseEvent);
     window.addEventListener("commutecast-seek", handleSeekEvent);
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("commutecast-toggle-play", handleTogglePlayEvent);
+      window.removeEventListener("commutecast-pause", handlePauseEvent);
       window.removeEventListener("commutecast-seek", handleSeekEvent);
       window.removeEventListener("keydown", handleKeyDown);
     };
@@ -1169,82 +1419,454 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* Studio Mixer */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-bg-secondary border border-border-primary rounded-2xl p-4 shadow-xs">
-          <div className="flex flex-col gap-1 col-span-1">
-            <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1 font-mono">
-              <Radio className="w-3.5 h-3.5 text-cyan-500" />
-              {pt.studioEfx}
-            </span>
-            <span className="text-xs text-text-muted leading-normal">
-              {uiLanguage === "vi" 
-                ? "Bản tin tích hợp nhạc nền không gian, hiệu ứng jingle, EQ giọng phát thanh viên chuyên nghiệp." 
-                : "Professional audio deck with space ambience, jingles, and broadcaster EQ."}
-            </span>
-          </div>
+        {/* Audio Studio Tabs Switcher */}
+        <div className="flex border-b border-border-primary/85" role="tablist" aria-label="Audio Studio Tabs">
+          <button
+            onClick={() => setActiveStudioTab("mixer")}
+            role="tab"
+            aria-selected={activeStudioTab === "mixer"}
+            className={`flex-1 py-2 text-xs font-bold text-center border-b-2 transition-all cursor-pointer ${
+              activeStudioTab === "mixer"
+                ? "border-cyan-500 text-cyan-600 dark:text-cyan-400"
+                : "border-transparent text-text-muted hover:text-text-main"
+            }`}
+          >
+            🎛️ {uiLanguage === "vi" ? "Mixer & Hiệu ứng" : "Mixer & Effects"}
+          </button>
+          <button
+            onClick={() => setActiveStudioTab("music")}
+            role="tab"
+            aria-selected={activeStudioTab === "music"}
+            className={`flex-1 py-2 text-xs font-bold text-center border-b-2 transition-all cursor-pointer ${
+              activeStudioTab === "music"
+                ? "border-cyan-500 text-cyan-600 dark:text-cyan-400"
+                : "border-transparent text-text-muted hover:text-text-main"
+            }`}
+          >
+            🎵 {uiLanguage === "vi" ? "Nhạc nền & Fade" : "BGM & Fade"}
+          </button>
+          <button
+            onClick={() => setActiveStudioTab("lexicon")}
+            role="tab"
+            aria-selected={activeStudioTab === "lexicon"}
+            className={`flex-1 py-2 text-xs font-bold text-center border-b-2 transition-all cursor-pointer ${
+              activeStudioTab === "lexicon"
+                ? "border-cyan-500 text-cyan-600 dark:text-cyan-400"
+                : "border-transparent text-text-muted hover:text-text-main"
+            }`}
+          >
+            🗣️ {uiLanguage === "vi" ? "Từ điển & Preview" : "Lexicon & Preview"}
+          </button>
+        </div>
 
-          {/* Master Voice Volume */}
-          <div className="flex flex-col gap-2 justify-center col-span-1">
-            <div className="flex justify-between items-center">
-              <label htmlFor="volume-slider" className="text-xs font-semibold text-text-main flex items-center gap-1.5 select-none">
-                <Volume2 className="w-4 h-4 text-text-muted" />
-                <span>{pt.volumeLabel}</span>
-              </label>
-              <span className="text-xs font-mono font-bold text-cyan-700 dark:text-cyan-450 bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-800/40 rounded-md px-2 py-0.5">
-                {Math.round(volume * 100)}%
-              </span>
+        {/* Tab Contents */}
+        <div className="bg-bg-secondary border border-border-primary rounded-2xl p-4 shadow-xs">
+          
+          {/* TAB 1: MIXER & EFFECTS */}
+          {activeStudioTab === "mixer" && (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Volume & Emotion */}
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-text-main flex items-center gap-1.5 select-none">
+                        <Volume2 className="w-4 h-4 text-text-muted" />
+                        <span>{pt.volumeLabel}</span>
+                      </span>
+                      <span className="text-xs font-mono font-bold text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-800/40 rounded-md px-2 py-0.5">
+                        {Math.round(volume * 100)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={volume}
+                      onChange={(e) => setVolume(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-border-primary rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-600 transition"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-text-main select-none">
+                      🎭 {uiLanguage === "vi" ? "Cảm xúc giọng nói (Emotion)" : "Vocal Emotion Tone"}
+                    </label>
+                    <select
+                      value={userPref.audioEmotion || "cheerful"}
+                      onChange={(e) => updatePreferences({ audioEmotion: e.target.value as any })}
+                      className="w-full text-xs bg-bg-primary text-text-main border border-border-primary rounded-xl px-3 py-2 focus:ring-2 focus:ring-cyan-500"
+                    >
+                      <option value="cheerful">☀️ {uiLanguage === "vi" ? "Vui tươi, rạng rỡ" : "Cheerful / Warm"}</option>
+                      <option value="professional">💼 {uiLanguage === "vi" ? "Đĩnh đạc, chuyên nghiệp" : "Professional / Executive"}</option>
+                      <option value="calm">🧘 {uiLanguage === "vi" ? "Điềm tĩnh, nhẹ nhàng" : "Calm / Relaxed"}</option>
+                      <option value="energetic">🔥 {uiLanguage === "vi" ? "Nhiệt huyết, mạnh mẽ" : "Energetic / Dynamic"}</option>
+                      <option value="empathetic">❤️ {uiLanguage === "vi" ? "Thấu hiểu, đồng cảm" : "Empathetic / Heartfelt"}</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Pause spacing & Voice Quality Toggles */}
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-text-main">
+                        ⏱️ {uiLanguage === "vi" ? "Thời lượng ngắt nghỉ (Pause)" : "Custom Chapter Pause"}
+                      </span>
+                      <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                        {(userPref.audioPauseDuration ?? 0.25).toFixed(2)}s
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={2.5}
+                      step={0.05}
+                      value={userPref.audioPauseDuration ?? 0.25}
+                      onChange={(e) => updatePreferences({ audioPauseDuration: parseFloat(e.target.value) })}
+                      className="w-full h-2 bg-border-primary rounded-lg appearance-none cursor-pointer accent-amber-500 hover:accent-amber-600 transition"
+                    />
+                  </div>
+
+                  {/* High Quality Features Toggles */}
+                  <div className="flex flex-col gap-2 bg-bg-primary/50 p-2.5 rounded-xl border border-border-primary/50">
+                    <span className="text-[10px] font-mono font-bold text-text-muted uppercase tracking-wider">
+                      🎛️ {uiLanguage === "vi" ? "Bộ xử lý tín hiệu số (DSP Effects)" : "DSP Voice Enhancement Hardware"}
+                    </span>
+                    <div className="flex flex-col gap-2 mt-1">
+                      
+                      <label className="flex items-center justify-between cursor-pointer select-none">
+                        <span className="text-xs text-text-main flex items-center gap-1.5">
+                          <span className="text-cyan-500">📈</span>
+                          <span>{uiLanguage === "vi" ? "Chuẩn hóa giọng đọc (Normalize)" : "Voice Normalization (+3dB)"}</span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={userPref.audioNormalize || false}
+                          onChange={(e) => updatePreferences({ audioNormalize: e.target.checked })}
+                          className="w-4 h-4 text-cyan-500 rounded border-border-primary accent-cyan-500 focus:ring-0"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between cursor-pointer select-none">
+                        <span className="text-xs text-text-main flex items-center gap-1.5">
+                          <span className="text-red-500">🛡️</span>
+                          <span>{uiLanguage === "vi" ? "Giới hạn chống rè (Limiter)" : "Digital Peak Limiter (-1.5dB)"}</span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={userPref.audioLimiter || false}
+                          onChange={(e) => updatePreferences({ audioLimiter: e.target.checked })}
+                          className="w-4 h-4 text-cyan-500 rounded border-border-primary accent-cyan-500 focus:ring-0"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between cursor-pointer select-none">
+                        <span className="text-xs text-text-main flex items-center gap-1.5">
+                          <span className="text-emerald-500">🍃</span>
+                          <span>{uiLanguage === "vi" ? "Bộ giảm nhiễu nền (Noise Reduction)" : "Noise Gate & Rumble Filter"}</span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={userPref.audioNoiseReduction || false}
+                          onChange={(e) => updatePreferences({ audioNoiseReduction: e.target.checked })}
+                          className="w-4 h-4 text-cyan-500 rounded border-border-primary accent-cyan-500 focus:ring-0"
+                        />
+                      </label>
+
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
-            <input
-              id="volume-slider"
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={volume}
-              onChange={(e) => setVolume(parseFloat(e.target.value))}
-              className="w-full h-2 bg-border-primary rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-600 transition"
-            />
-          </div>
+          )}
 
-          {/* Background Music Config */}
-          <div className="flex flex-col gap-2 justify-center col-span-1">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold text-text-main flex items-center gap-1.5 select-none">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>{uiLanguage === "vi" ? "Nhạc nền" : "Background"}</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-text-muted">
-                  {isBgMusicEnabled ? "Bật" : "Tắt"}
+          {/* TAB 2: BACKGROUND MUSIC & FADE */}
+          {activeStudioTab === "music" && (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* BGM Genre Selector */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-text-main select-none flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>{uiLanguage === "vi" ? "Thể loại nhạc nền (BGM)" : "Background Music Genre"}</span>
+                  </label>
+                  
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-text-muted">
+                      {isBgMusicEnabled ? (uiLanguage === "vi" ? "Đang bật" : "Active") : (uiLanguage === "vi" ? "Đang tắt" : "Disabled")}
+                    </span>
+                    <button
+                      onClick={() => setIsBgMusicEnabled(!isBgMusicEnabled)}
+                      className={`relative w-10 h-5 rounded-full transition-colors ${
+                        isBgMusicEnabled ? "bg-cyan-500" : "bg-border-primary"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          isBgMusicEnabled ? "translate-x-5" : ""
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <select
+                    value={userPref.audioMusicGenre || "none"}
+                    disabled={!isBgMusicEnabled}
+                    onChange={(e) => updatePreferences({ audioMusicGenre: e.target.value as any })}
+                    className="w-full text-xs bg-bg-primary text-text-main border border-border-primary rounded-xl px-3 py-2 focus:ring-2 focus:ring-cyan-500 disabled:opacity-50"
+                  >
+                    <option value="none">❌ {uiLanguage === "vi" ? "Không dùng nhạc nền" : "No Background Music"}</option>
+                    <option value="lofi">☕ {uiLanguage === "vi" ? "Lofi Thư giãn (Cmaj7)" : "Relaxing Lofi Chords"}</option>
+                    <option value="acoustic">🎸 {uiLanguage === "vi" ? "Acoustic Tươi sáng (C Major)" : "Acoustic Fingerstyle"}</option>
+                    <option value="synthwave">🚀 {uiLanguage === "vi" ? "Pulse Điện tử (Retro Synthwave)" : "Cyberpunk Synthwave Bass"}</option>
+                    <option value="classical">🎹 {uiLanguage === "vi" ? "Cổ điển Độc tấu (G7 Symphony)" : "Classical Piano Arpeggios"}</option>
+                  </select>
+                </div>
+
+                {/* BGM Volume & Fade Duration */}
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-text-main">
+                        🔊 {uiLanguage === "vi" ? "Âm lượng nhạc nền" : "BGM Volume Mix"}
+                      </span>
+                      <span className="text-xs font-mono font-bold text-amber-600">
+                        {Math.round((userPref.audioMusicVolume ?? bgMusicVolume) * 100)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.02}
+                      max={0.5}
+                      step={0.02}
+                      disabled={!isBgMusicEnabled}
+                      value={userPref.audioMusicVolume ?? bgMusicVolume}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setBgMusicVolume(val);
+                        updatePreferences({ audioMusicVolume: val });
+                      }}
+                      className="w-full h-2 bg-border-primary rounded-lg appearance-none cursor-pointer accent-amber-500 hover:accent-amber-600 transition disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-text-main">
+                        📉 {uiLanguage === "vi" ? "Thời gian Fade In / Fade Out" : "BGM Fade-in / Fade-out"}
+                      </span>
+                      <span className="text-xs font-mono font-bold text-cyan-600 dark:text-cyan-400">
+                        {(userPref.audioFadeDuration ?? 1.5).toFixed(1)}s
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={4.0}
+                      step={0.1}
+                      disabled={!isBgMusicEnabled}
+                      value={userPref.audioFadeDuration ?? 1.5}
+                      onChange={(e) => updatePreferences({ audioFadeDuration: parseFloat(e.target.value) })}
+                      className="w-full h-2 bg-border-primary rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-600 transition disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: PRONUNCIATION LEXICON & PREVIEW */}
+          {activeStudioTab === "lexicon" && (
+            <div className="flex flex-col gap-4">
+              
+              {/* Voice Preview widget */}
+              <div className="bg-bg-primary/50 border border-border-primary p-3 rounded-xl flex flex-col gap-2">
+                <span className="text-[10px] font-mono font-bold text-text-muted uppercase tracking-wider flex items-center justify-between">
+                  <span>🎙️ {uiLanguage === "vi" ? "BẢN XEM TRƯỚC GIỌNG ĐỌC (VOICE PREVIEW)" : "REALTIME VOICE PREVIEW ENGINE"}</span>
+                  <span className="text-[8px] text-cyan-500 bg-cyan-50 dark:bg-cyan-950/40 px-1 py-0.5 rounded border border-cyan-100">
+                    Active: {userPref.audioEmotion || 'cheerful'} emotion
+                  </span>
                 </span>
-                <button
-                  onClick={() => setIsBgMusicEnabled(!isBgMusicEnabled)}
-                  className={`relative w-10 h-5 rounded-full transition-colors ${
-                    isBgMusicEnabled ? "bg-cyan-500" : "bg-border-primary"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                      isBgMusicEnabled ? "translate-x-5" : ""
-                    }`}
+                
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={previewText}
+                    onChange={(e) => setPreviewText(e.target.value)}
+                    placeholder={uiLanguage === "vi" ? "Nhập từ khóa hoặc câu ngắn để kiểm tra giọng đọc..." : "Enter a word or phrase to test synthesis..."}
+                    className="flex-1 text-xs bg-bg-primary text-text-main border border-border-primary rounded-xl px-3 py-2 focus:ring-1 focus:ring-cyan-500"
                   />
-                </button>
+                  <button
+                    onClick={handlePlayVoicePreview}
+                    disabled={isPreviewing || !previewText.trim()}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer select-none ${
+                      isPreviewing 
+                        ? "bg-slate-700 text-white cursor-not-allowed" 
+                        : "bg-cyan-500 hover:bg-cyan-600 text-slate-950 shadow-sm"
+                    }`}
+                  >
+                    {isPreviewing ? (
+                      <>
+                        <span className="w-3 h-3 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                        <span>Playing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>▶️ Preview</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                {previewError && <p className="text-[10px] text-red-500 font-mono">{previewError}</p>}
               </div>
+
+              {/* Pronunciation addition form */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-text-main">
+                  📖 {uiLanguage === "vi" ? "Từ điển phát âm (Pronunciation Dictionary)" : "Pronunciation Lexicon Substitutions"}
+                </label>
+                <p className="text-[10px] text-text-muted">
+                  {uiLanguage === "vi"
+                    ? "Sửa các từ viết tắt hoặc từ mượn tiếng Anh để Gemini đọc tự nhiên hơn (ví dụ: 'AI' -> 'ai ai', 'GPS' -> 'gi pi ét')."
+                    : "Substitute custom abbreviations or foreign phrases (e.g. 'Stripe' -> 'straip', 'GPS' -> 'g p s') for natural reads."}
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-2 mt-1">
+                  <input
+                    type="text"
+                    value={newWord}
+                    onChange={(e) => setNewWord(e.target.value)}
+                    placeholder={uiLanguage === "vi" ? "Ví dụ: AI, ChatGPT..." : "Word (e.g. ChatGPT)"}
+                    className="flex-1 text-xs bg-bg-primary text-text-main border border-border-primary rounded-xl px-3 py-2"
+                  />
+                  <input
+                    type="text"
+                    value={newReplace}
+                    onChange={(e) => setNewReplace(e.target.value)}
+                    placeholder={uiLanguage === "vi" ? "Đọc thành: ai ai, chát gípiti..." : "Read As (e.g. chat jipiti)"}
+                    className="flex-1 text-xs bg-bg-primary text-text-main border border-border-primary rounded-xl px-3 py-2"
+                  />
+                  <button
+                    onClick={handleAddPronunciation}
+                    disabled={!newWord.trim() || !newReplace.trim()}
+                    className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer disabled:opacity-50"
+                  >
+                    ➕ {uiLanguage === "vi" ? "Thêm" : "Add word"}
+                  </button>
+                </div>
+
+                {/* Word Lexicon Table List */}
+                {(userPref.audioPronunciationDict || []).length > 0 ? (
+                  <div className="max-h-32 overflow-y-auto border border-border-primary/60 rounded-xl mt-1.5 divide-y divide-border-primary bg-bg-primary/30">
+                    {(userPref.audioPronunciationDict || []).map((entry, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-2 text-xs font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-text-main">{entry.word}</span>
+                          <span className="text-text-muted">→</span>
+                          <span className="text-cyan-600 dark:text-cyan-400 font-medium">{entry.replace}</span>
+                        </div>
+                        <button
+                          onClick={() => handleRemovePronunciation(entry.word)}
+                          className="text-[10px] text-red-500 hover:text-red-700 font-sans cursor-pointer"
+                        >
+                          ❌ {uiLanguage === "vi" ? "Xóa" : "Remove"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-text-muted italic text-center py-2">
+                    {uiLanguage === "vi" ? "Chưa có từ phát âm tùy chỉnh nào." : "No custom pronunciation overrides added yet."}
+                  </p>
+                )}
+              </div>
+
             </div>
-            {isBgMusicEnabled && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-text-muted">Âm lượng</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={0.5}
-                  step={0.02}
-                  value={bgMusicVolume}
-                  onChange={(e) => setBgMusicVolume(parseFloat(e.target.value))}
-                  className="flex-1 h-1.5 bg-border-primary rounded-lg appearance-none cursor-pointer accent-amber-500"
-                />
-              </div>
+          )}
+
+        </div>
+
+        {/* ================= AUDIO TIMELINE ================= */}
+        <div className="bg-bg-secondary border border-border-primary rounded-2xl p-4 shadow-xs mt-2 flex flex-col gap-3">
+          <h5 className="text-xs font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
+            <span className="text-sm">📅</span>
+            <span>{uiLanguage === "vi" ? "Trục thời gian bản tin (Audio Timeline)" : "Audio Timeline Grid"}</span>
+          </h5>
+          <p className="text-xs text-text-muted">
+            {uiLanguage === "vi" 
+              ? "Bấm vào phân đoạn bất kỳ bên dưới để di chuyển đầu phát đến vị trí đó." 
+              : "Click any block on the interactive timeline to jump the playhead to that segment."}
+          </p>
+          
+          {/* Timeline visualization bar */}
+          <div className="relative w-full h-8 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden flex border border-border-primary">
+            {getTimelineSegments().map((seg, sIdx) => {
+              const isActive = currentTime >= seg.start && currentTime <= seg.end;
+              return (
+                <button
+                  key={sIdx}
+                  onClick={() => {
+                    handleScrubberChange({ target: { value: seg.start.toString() } } as any);
+                  }}
+                  title={`${seg.label} (${Math.round(seg.start)}s - ${Math.round(seg.end)}s)`}
+                  className={`h-full relative group transition-all duration-300 border-r border-slate-200 dark:border-slate-800 text-center flex items-center justify-center cursor-pointer select-none`}
+                  style={{ width: `${seg.endPct - seg.startPct}%` }}
+                >
+                  <div className={`absolute inset-0 transition-opacity ${
+                    isActive 
+                      ? "bg-cyan-500/15 dark:bg-cyan-400/25 animate-pulse" 
+                      : "bg-transparent group-hover:bg-slate-200/50 dark:group-hover:bg-slate-800/40"
+                  }`} />
+                  <span className={`text-[9px] font-mono font-bold truncate px-1 relative z-10 transition-colors ${
+                    isActive 
+                      ? "text-cyan-600 dark:text-cyan-400" 
+                      : "text-slate-550 dark:text-slate-400"
+                  }`}>
+                    {seg.label}
+                  </span>
+                  
+                  {/* Tooltip on hover */}
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1.5 opacity-0 pointer-events-none group-hover:opacity-100 transition-all z-50 bg-slate-900 text-white text-[10px] py-1 px-2.5 rounded-lg shadow-xl border border-slate-700 whitespace-nowrap font-mono">
+                    <span className="font-bold">{seg.label}</span>
+                    <br />
+                    <span>{formatTime(seg.start)} - {formatTime(seg.end)}</span>
+                  </div>
+                </button>
+              );
+            })}
+            
+            {/* Live Playhead Indicator line */}
+            {totalDuration > 0 && (
+              <div 
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] z-20 pointer-events-none transition-all duration-100"
+                style={{ left: `${(currentTime / totalDuration) * 100}%` }}
+              />
             )}
+          </div>
+
+          {/* Legend and Layers */}
+          <div className="flex flex-wrap items-center gap-4 text-[10px] text-text-muted font-mono bg-bg-primary/50 p-2 rounded-lg border border-border-primary/50">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded bg-slate-250 dark:bg-slate-800 border border-slate-300" />
+              <span>{uiLanguage === "vi" ? "Khối tin tức" : "News segments"}</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded bg-cyan-400/30 border border-cyan-400/50" />
+              <span>{uiLanguage === "vi" ? "Đoạn đang phát" : "Active Playing"}</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-0.5 h-3 bg-red-500" />
+              <span>{uiLanguage === "vi" ? "Đầu đọc thời gian thực" : "Live playhead"}</span>
+            </span>
+            <span className="ml-auto font-bold text-cyan-600 dark:text-cyan-400">
+              {uiLanguage === "vi" ? "Nhạc nền:" : "BGM Layer:"} {isBgMusicEnabled ? `Genre [${userPref.audioMusicGenre ?? 'lofi'}]` : "OFF"}
+            </span>
           </div>
         </div>
 

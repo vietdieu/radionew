@@ -8,7 +8,11 @@ const KEYS = {
   STATS: "cc_stats",
   QUEUE: "cc_queue",
   ACCESSIBILITY: "cc_accessibility",
-  SETTINGS: "cc_feature_settings"
+  SETTINGS: "cc_feature_settings",
+  HISTORY: "cc_playback_history",
+  FAVORITES: "cc_favorite_ids",
+  REPEAT_MODE: "cc_repeat_mode",
+  AUTO_CONTINUE: "cc_auto_continue"
 };
 
 const DEFAULT_VOICE_PROFILE: VoiceProfile = {
@@ -274,4 +278,98 @@ export const removeFromQueue = (id: string) => {
 
 export const clearQueue = () => {
   savePlayQueue([]);
+};
+
+// Playback History
+export const getPlaybackHistory = (): QueueItem[] => {
+  try {
+    const saved = localStorage.getItem(KEYS.HISTORY);
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const savePlaybackHistory = (history: QueueItem[]) => {
+  try {
+    localStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
+    featureStoreEvents.emitChange();
+  } catch (e) {
+    console.warn("Failed to save history:", e);
+  }
+};
+
+export const addToPlaybackHistory = (item: QueueItem) => {
+  const history = getPlaybackHistory();
+  const filtered = history.filter(h => h.id !== item.id);
+  // Max 30 items
+  const updated = [item, ...filtered].slice(0, 30);
+  savePlaybackHistory(updated);
+};
+
+export const clearPlaybackHistory = () => {
+  savePlaybackHistory([]);
+};
+
+// Favorites
+export const getFavoriteIds = (): string[] => {
+  try {
+    const saved = localStorage.getItem(KEYS.FAVORITES);
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const saveFavoriteIds = (ids: string[]) => {
+  try {
+    localStorage.setItem(KEYS.FAVORITES, JSON.stringify(ids));
+    featureStoreEvents.emitChange();
+  } catch (e) {
+    console.warn("Failed to save favorites:", e);
+  }
+};
+
+export const toggleFavoriteId = (id: string) => {
+  const ids = getFavoriteIds();
+  const updated = ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id];
+  saveFavoriteIds(updated);
+};
+
+// Repeat Mode: "off" | "all" | "one"
+export const getRepeatMode = (): "off" | "all" | "one" => {
+  try {
+    const saved = localStorage.getItem(KEYS.REPEAT_MODE);
+    return (saved as any) || "off";
+  } catch {
+    return "off";
+  }
+};
+
+export const setRepeatMode = (mode: "off" | "all" | "one") => {
+  try {
+    localStorage.setItem(KEYS.REPEAT_MODE, mode);
+    featureStoreEvents.emitChange();
+  } catch (e) {
+    console.warn("Failed to save repeat mode:", e);
+  }
+};
+
+// Auto Continue
+export const getAutoContinue = (): boolean => {
+  try {
+    const saved = localStorage.getItem(KEYS.AUTO_CONTINUE);
+    return saved !== null ? saved === "true" : true;
+  } catch {
+    return true;
+  }
+};
+
+export const setAutoContinue = (enabled: boolean) => {
+  try {
+    localStorage.setItem(KEYS.AUTO_CONTINUE, String(enabled));
+    featureStoreEvents.emitChange();
+  } catch (e) {
+    console.warn("Failed to save auto continue:", e);
+  }
 };
